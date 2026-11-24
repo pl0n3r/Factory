@@ -1,5 +1,10 @@
 """Contrato offline de permisos mínimos y triggers Dependabot Factory #2184."""
 from pathlib import Path
+import json
+import os
+import shutil
+import subprocess
+import tempfile
 import re
 import unittest
 
@@ -108,6 +113,177 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
                        "sin", "sin red", "pull_request_target", "live"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, DOC)
+
+    @staticmethod
+    def _pr_step(name):
+        """Extraer el Bash que GitHub ejecuta: no simular el comando en el test."""
+        section = job(REUSABLE, "pr").split("      - name: " + name + "\n", 1)[1]
+        section = section.split("\n      - ", 1)[0]
+        script = section.split("        run: |\n", 1)[1]
+        commands = []
+        for line in script.splitlines():
+            if not line.startswith("          "):
+                break  # Otro step/comentario YAML: nunca incorporarlo al Bash.
+            commands.append(line[10:])
+        return section, "\n".join(commands) + "\n"
+
+    @staticmethod
+    def _classify_fixture(*, fake_bot=False, code=False, unsigned=False):
+        sha = "a" * 40
+        user = {
+            "login": "dependabot[bot]", "id": 49699333, "type": "Bot",
+            "html_url": "https://github.com/apps/dependabot",
+            "avatar_url": "https://avatars.githubusercontent.com/in/29110?v=4",
+        }
+        if fake_bot:
+            user["avatar_url"] = "https://avatars.githubusercontent.com/in/99999?v=4"
+        return {
+            "pr": {
+                "number": 99, "state": "open", "user": user, "changed_files": 1,
+                "head": {"sha": sha, "repo": {"full_name": "pl0n3r/Factory"}},
+                "base": {"sha": "c" * 40, "ref": "main",
+                         "repo": {"full_name": "pl0n3r/Factory"}},
+            },
+            "files": [{
+                "filename": "src/main.py" if code else "package-lock.json",
+                "status": "modified", "patch": "@@ -1 +1 @@\n-old\n+new",
+            }],
+            "commit": {
+                "author": {"login": "dependabot[bot]", "id": 49699333},
+                "commit": {
+                    "verification": {"verified": not unsigned},
+                    "message": "chore(deps): bump example\n\nupdated-dependencies:\n"
+                               "- dependency-name: example\n"
+                               "  dependency-version: 1.2.3\n"
+                               "  update-type: version-update:semver-minor",
+                },
+            },
+        }
+
+    @staticmethod
+    def _mock_api_sitecustomize():
+        # Se carga antes del CLI real; intercepta urllib.request.urlopen, no
+        # reemplaza el parser ni la clasificación de dependabot_lane.py.
+        return '''
+import io
+import json
+import os
+from urllib import request
+from urllib.error import URLError
+from urllib.parse import urlsplit
+
+def mocked_urlopen(req, timeout=None):
+    if os.environ.get("FIXTURE_API_ERROR") == "yes":
+        raise URLError("API sintética no disponible")
+    data = json.loads(os.environ["FIXTURE_JSON"])
+    path = urlsplit(req.full_url).path
+    if path.endswith("/pulls/99"):
+        count = getattr(mocked_urlopen, "count", 0)
+        result = json.loads(json.dumps(data["pr"]))
+        if count and os.environ.get("FIXTURE_HEAD_DRIFT") == "yes":
+            result["head"]["sha"] = "b" * 40
+        mocked_urlopen.count = count + 1
+    elif path.endswith("/pulls/99/files"):
+        result = data["files"]
+    elif path.endswith("/commits/" + "a" * 40):
+        result = data["commit"]
+    else:
+        raise AssertionError("URL API no contemplada: " + path)
+    return io.BytesIO(json.dumps(result).encode("utf-8"))
+
+request.urlopen = mocked_urlopen
+'''
+
+    def _execute_classification(self, fixture, *, api_error=False, drift=False):
+        _, shell = self._pr_step("Clasificar Dependabot oficial antes de sincronizar")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            kit = root / ".factory/scripts"
+            kit.mkdir(parents=True)
+            shutil.copyfile(ROOT / "scripts/dependabot_lane.py", kit / "dependabot_lane.py")
+            (root / "sitecustomize.py").write_text(self._mock_api_sitecustomize(),
+                                                    encoding="utf-8")
+            output = root / "output"
+            output.write_text("", encoding="utf-8")
+            env = {
+                **os.environ,
+                "PYTHONPATH": str(root),
+                "GH_TOKEN": "synthetic-token", "REPOSITORIO": "pl0n3r/Factory",
+                "PR": "99", "HEAD": "a" * 40, "GITHUB_OUTPUT": str(output),
+                "FIXTURE_JSON": json.dumps(fixture),
+                "FIXTURE_API_ERROR": "yes" if api_error else "no",
+                "FIXTURE_HEAD_DRIFT": "yes" if drift else "no",
+            }
+            result = subprocess.run(["bash", "-euo", "pipefail", "-c", shell],
+                                    cwd=root, env=env, capture_output=True,
+                                    text=True, timeout=15, check=False)
+            return result, output.read_text(encoding="utf-8")
+
+    def test_pr_event_classifies_official_dependabot_before_sync(self):
+        pr_job = job(REUSABLE, "pr")
+        classify_step, classify_run = self._pr_step(
+            "Clasificar Dependabot oficial antes de sincronizar")
+        sync_step, _ = self._pr_step("Sincronizar PR V3")
+        self.assertLess(pr_job.index("dependabot_lane.py classify"),
+                        pr_job.index("coordinar_trabajo.py pr-event"))
+        self.assertIn("id: dependabot-lane", classify_step)
+        self.assertIn("github.event.action != 'closed'", classify_step)
+        self.assertIn("github.event.pull_request.user.login == 'dependabot[bot]'",
+                      classify_step)
+        self.assertIn("HEAD: ${{ github.event.pull_request.head.sha }}", classify_step)
+        self.assertIn('dependabot_lane.py classify --repo "$REPOSITORIO" --pr "$PR" --head "$HEAD"',
+                      classify_run)
+        self.assertIn("echo 'approved=true' >> \"$GITHUB_OUTPUT\"", classify_run)
+        self.assertIn("steps.dependabot-lane.outputs.approved != 'true'", sync_step)
+        self.assertNotIn("coordinar_trabajo.py", classify_run)
+        result, output = self._execute_classification(self._classify_fixture())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, "approved=true\n")
+        self.assertIn('"policy": "auto"', result.stdout)
+
+    def test_pr_event_preserves_human_and_fail_closed_coordination(self):
+        classify_step, _ = self._pr_step(
+            "Clasificar Dependabot oficial antes de sincronizar")
+        sync_step, sync_run = self._pr_step("Sincronizar PR V3")
+        self.assertIn("github.event_name == 'pull_request'", classify_step)
+        self.assertIn("github.event.action == 'closed'", sync_step)
+        self.assertIn("github.event.pull_request.user.login == 'dependabot[bot]'",
+                      sync_step)
+        self.assertIn("steps.dependabot-lane.outputs.approved != 'true'", sync_step)
+        for name, fixture, options in (
+            ("impostor", self._classify_fixture(fake_bot=True), {}),
+            ("archivo de código", self._classify_fixture(code=True), {}),
+            ("commit no firmado", self._classify_fixture(unsigned=True), {}),
+            ("carrera HEAD", self._classify_fixture(), {"drift": True}),
+            ("API ilegible", self._classify_fixture(), {"api_error": True}),
+        ):
+            with self.subTest(case=name):
+                result, output = self._execute_classification(fixture, **options)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(output, "")
+        # Para PR humano y su cierre, clasificador no se activa: el Bash real
+        # invoca pr-event. Un cierre de Dependabot no pasa por este camino V3.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            kit = root / ".factory/scripts"
+            kit.mkdir(parents=True)
+            (kit / "coordinar_trabajo.py").write_text(
+                'import os,sys,pathlib\n'
+                'pathlib.Path(os.environ["CALLED_FILE"]).write_text(" ".join(sys.argv[1:]))\n',
+                encoding="utf-8")
+            invoked = root / "called"
+            for action in ("opened", "closed"):
+                with self.subTest(action=action):
+                    env = {**os.environ, "GH_TOKEN": "synthetic-token",
+                           "REPOSITORIO": "pl0n3r/Factory", "PR": "99",
+                           "ACTION": action, "CALLED_FILE": str(invoked)}
+                    result = subprocess.run(
+                        ["bash", "-euo", "pipefail", "-c", sync_run],
+                        cwd=root, env=env, capture_output=True, text=True,
+                        timeout=15, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(invoked.read_text(encoding="utf-8"),
+                                     "pr-event --repo pl0n3r/Factory --pr 99 --action " + action)
 
 
 if __name__ == "__main__":

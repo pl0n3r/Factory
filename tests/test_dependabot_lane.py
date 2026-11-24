@@ -460,6 +460,8 @@ class DependabotLaneCoverageTests(unittest.TestCase):
                 _terminal_checks_green("pl0n3r/Factory", SHA, "token")
 
     def test_consumer_exact_required_ci_gate(self):
+        # Archivo de aceptación corre aislado; un fd diagnóstico muestra el fallo oculto.
+        os.write(2, b"GF2207-AC01-FD-ENTRY\\n")
         # Diagnostico temporal: el runner de aceptacion oculta el stream unittest.
         print("GF2207-AC01-ENTRY", file=sys.stderr)
         def reveal_isolated_failures():
@@ -929,6 +931,12 @@ class DependabotLaneCoverageTests(unittest.TestCase):
         with self.assertRaises(LaneError):
             classify(good, [manifest()], base_commit, repo="not-allowed", head=SHA)
 
+
+if __name__.startswith("_factory_acceptance_"):
+    os.write(2, ("GF2207-AC01-IMPORT " + __name__ +
+                 " class=" + str("DependabotLaneTests" in globals()) +
+                 " method=" + str(hasattr(DependabotLaneTests,
+                   "test_consumer_exact_required_ci_gate")) + "\\n").encode())
 
 if __name__ == "__main__":
     unittest.main()
