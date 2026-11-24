@@ -4,7 +4,7 @@
 
 Estado: documented_not_legally_approved. Esta documentación NO está aprobada jurídicamente.
 
-Versión del repositorio: 1.0.59. SHA del checkout origen: f18463ab2071dcedd39cd65839829b7cea534301. Fecha UTC: 2026-11-18T02:11:11Z.
+Versión del repositorio: 1.0.60. SHA del checkout origen: f18463ab2071dcedd39cd65839829b7cea534301. Fecha UTC: 2026-11-18T02:11:11Z.
 
 Entregue todos los archivos de esta carpeta al abogado, o el archivo paquete-completo.md como documento único. Las plantillas .tpl conservan variables sin rellenar y NO deben publicarse como documentos jurídicos definitivos.
 
