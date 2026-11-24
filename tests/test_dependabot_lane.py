@@ -234,6 +234,94 @@ class DependabotLaneTests(unittest.TestCase):
         self.assertIn("factory-dependabot-postmerge", created[0]["body"])
         self.assertIn("workflow_dispatch", created[0]["body"])
 
+    def test_reconcile_sweep_budget_guard_rejects_unsafe_squash(self):
+        now = datetime(2026, 11, 24, tzinfo=timezone.utc)
+        info = {"dependabot": True, "policy": "auto",
+                "file_paths": ["package-lock.json"]}
+        source = pr()
+        writes = []
+        def github(_repo, path, _token, *, method="GET", payload=None):
+            self.assertEqual(method, "PUT")
+            self.assertTrue(path.endswith("/merge"))
+            writes.append(payload)
+            return {"merged": False, "sha": "b" * 40}
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "schedule",
+                                    "GITHUB_REF": "refs/heads/main"}),
+            patch("scripts.dependabot_lane.read_exact", return_value=(source, info)),
+            patch("scripts.dependabot_lane._terminal_checks_green", return_value=True),
+            patch("scripts.dependabot_lane._switch_running", return_value=True),
+            patch("scripts.dependabot_lane.time.monotonic", return_value=1234.0),
+            patch("scripts.dependabot_lane.api", side_effect=github),
+        ):
+            with self.assertRaisesRegex(LaneError, "Deadline"):
+                reconcile("pl0n3r/GrindFlow", 99, SHA, "token", now=now,
+                          job_deadline="invalid")
+            deferred = reconcile("pl0n3r/GrindFlow", 99, SHA, "token", now=now,
+                                 job_deadline=1300.0)
+            self.assertEqual(deferred["deferred"], "insufficient_job_budget")
+            self.assertFalse(deferred["followup_required"])
+            self.assertEqual(writes, [])
+            with self.assertRaisesRegex(LaneError, "GitHub no confirmó"):
+                reconcile("pl0n3r/GrindFlow", 99, SHA, "token", now=now,
+                          job_deadline=5000.0)
+        self.assertEqual(writes, [{"sha": SHA, "merge_method": "squash"}])
+
+    def test_postmerge_followup_rejects_unverified_or_stale_metadata(self):
+        merge_sha = "b" * 40
+        with patch("scripts.dependabot_lane.api",
+                   side_effect=AssertionError("no remote mutation")):
+            for sha, failure in ((None, "failed"), ("bad", "failed"),
+                                 (merge_sha, ""), (merge_sha, "line\nbreak"),
+                                 (merge_sha, "x" * 301)):
+                with self.subTest(sha=sha, failure=failure[:20]):
+                    with self.assertRaises(LaneError):
+                        create_followup("pl0n3r/GrindFlow", 99, SHA, "token",
+                                        reason="postmerge",
+                                        paths=["package-lock.json"],
+                                        merge_sha=sha, failure=failure)
+            with self.assertRaisesRegex(LaneError, "fuera de su alcance"):
+                create_followup("pl0n3r/GrindFlow", 99, SHA, "token",
+                                reason="stale", paths=["package-lock.json"],
+                                merge_sha=merge_sha)
+        identity = {"version": 1, "repo": "pl0n3r/GrindFlow",
+                    "pr": 99, "merge_sha": merge_sha}
+        marker = ("<!-- factory-dependabot-postmerge "
+                  + json.dumps(identity, sort_keys=True, separators=(",", ":"))
+                  + " -->")
+        with patch("scripts.dependabot_lane.api",
+                   return_value={"incomplete_results": False,
+                                 "total_count": 1,
+                                 "items": [{"number": True, "body": marker}]}):
+            with self.assertRaisesRegex(LaneError, "Issue de seguimiento inválido"):
+                create_followup("pl0n3r/GrindFlow", 99, SHA, "token",
+                                reason="postmerge", paths=["package-lock.json"],
+                                merge_sha=merge_sha, failure="failed")
+
+    def test_postmerge_missing_run_attempt_denied_before_jobs(self):
+        merge_sha = "b" * 40
+        started = []
+        run = {"id": 171, "name": "GrindFlow CI", "event": "workflow_dispatch",
+               "head_branch": "main", "head_sha": merge_sha,
+               "status": "completed", "conclusion": "success"}
+        def github(_repo, path, _token, *, method="GET", payload=None):
+            if path.endswith("/git/ref/heads/main"):
+                return {"object": {"sha": merge_sha}}
+            if path.endswith("/dispatches"):
+                started.append(path)
+                return None
+            if "/runs?event=" in path:
+                return {"total_count": int(bool(started)),
+                        "workflow_runs": [run] if started else []}
+            if path.endswith("/actions/runs/171"):
+                return run
+            raise AssertionError("jobs requested without a valid attempt")
+        with patch("scripts.dependabot_lane.api", side_effect=github):
+            with self.assertRaisesRegex(LaneError, "Intento de CI post-merge inválido"):
+                lane._postmerge_exact_main_ci("pl0n3r/GrindFlow",
+                                              merge_sha, "token")
+        self.assertEqual(len(started), 1)
+
     def test_red_minor_never_calls_merge(self):
         now = datetime(2026, 11, 22, tzinfo=timezone.utc)
         request = pr()
