@@ -120,7 +120,12 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
         section = job(REUSABLE, "pr").split("      - name: " + name + "\n", 1)[1]
         section = section.split("\n      - ", 1)[0]
         script = section.split("        run: |\n", 1)[1]
-        return section, "\n".join(line[10:] for line in script.splitlines()) + "\n"
+        commands = []
+        for line in script.splitlines():
+            if not line.startswith("          "):
+                break  # Otro step/comentario YAML: nunca incorporarlo al Bash.
+            commands.append(line[10:])
+        return section, "\n".join(commands) + "\n"
 
     @staticmethod
     def _classify_fixture(*, fake_bot=False, code=False, unsigned=False):
