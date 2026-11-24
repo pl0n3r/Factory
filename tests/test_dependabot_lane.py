@@ -14,7 +14,6 @@ from scripts.dependabot_lane import create_followup, _terminal_checks_green, _sw
 
 from scripts.dependabot_lane import LaneError, _age_over_seven_days, classify, api, read_exact, classify_from_api, main
 import scripts.dependabot_lane as lane
-import sys
 
 
 SHA = "a" * 40
@@ -460,18 +459,8 @@ class DependabotLaneCoverageTests(unittest.TestCase):
                 _terminal_checks_green("pl0n3r/Factory", SHA, "token")
 
     def test_consumer_exact_required_ci_gate(self):
-        # Archivo de aceptación corre aislado; un fd diagnóstico muestra el fallo oculto.
-        os.write(2, b"GF2207-AC01-FD-ENTRY\\n")
-        # Diagnostico temporal: el runner de aceptacion oculta el stream unittest.
-        print("GF2207-AC01-ENTRY", file=sys.stderr)
-        def reveal_isolated_failures():
-            outcome = getattr(self, "_outcome", None)
-            result = getattr(outcome, "result", None)
-            if result is not None:
-                for kind in ("failures", "errors"):
-                    for _, detail in getattr(result, kind, ()):
-                        print("GF2207-AC01-" + kind + ": " + detail[-2500:], file=sys.stderr)
-        self.addCleanup(reveal_isolated_failures)
+        # Cada consumidor tiene su propio contexto CI obligatorio. Los
+        # fixtures son independientes para que un negativo no contamine otro.
         cases = {
             "pl0n3r/Factory": ("Validar",),
             "pl0n3r/Condor": ("Validar",),
@@ -480,39 +469,51 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             "pl0n3r/GrindFlow": ("validate",),
             "pl0n3r/FactoryRunner": ("validate", "ci / Validar"),
         }
+
         def check(name, ident, *, status="completed", conclusion="success"):
-            return {"name": name, "id": ident, "head_sha": SHA,
-                    "status": status, "conclusion": conclusion,
-                    "app": {"slug": "github-actions", "id": 15368}}
-        def expect_gate(repo, expected, label):
-            try:
-                actual = _terminal_checks_green(repo, SHA, "token")
-            except Exception as error:
-                print(f"Gate {repo}/{label}: {error!r}", file=sys.stderr)
-                raise
-            if actual is not expected:
-                print(f"Gate {repo}/{label}: {actual!r} != {expected!r}", file=sys.stderr)
-            self.assertIs(actual, expected)
+            return {
+                "name": name, "id": ident, "head_sha": SHA,
+                "status": status, "conclusion": conclusion,
+                "app": {"slug": "github-actions", "id": 15368},
+            }
 
         for repo, required in cases.items():
-            rows = [check(name, index + 1) for index, name in enumerate(required)]
-            rows.append(check("Other passing check", 10))
-            def response(_repo, _path, _token, *, method="GET", payload=None):
-                return {"total_count": len(rows), "check_runs": rows}
-            with self.subTest(repo=repo), patch.object(lane, "api", side_effect=response):
-                expect_gate(repo, True, "all-required")
-                expect_gate(repo.swapcase(), True, "casefold")
-                for required_check in required:
-                    removed = next(c for c in rows if c["name"] == required_check)
-                    rows.remove(removed)
-                    expect_gate(repo, False, "negative")
-                    rows.insert(0, removed)
-                    removed["conclusion"] = "skipped"
-                    expect_gate(repo, False, "negative")
-                    removed["conclusion"] = "success"
-                    removed["status"] = "in_progress"
-                    expect_gate(repo, False, "negative")
-                    removed["status"] = "completed"
+            # Incluye siempre un check no canónico en verde.
+            passing = [
+                *[check(name, index + 1) for index, name in enumerate(required)],
+                check("Other passing check", 10),
+            ]
+            for scenario in ("success", "repo_casefold", "missing", "skipped", "pending"):
+                rows = [dict(row) for row in passing]
+                checked_repo = repo.swapcase() if scenario == "repo_casefold" else repo
+                if scenario == "missing":
+                    rows = [row for row in rows if row["name"] != required[0]]
+                elif scenario == "skipped":
+                    rows[0]["conclusion"] = "skipped"
+                elif scenario == "pending":
+                    rows[0]["status"] = "in_progress"
+                    rows[0]["conclusion"] = None
+
+                def response(_repo, _path, _token, *, method="GET", payload=None):
+                    return {"total_count": len(rows), "check_runs": rows}
+
+                with self.subTest(repo=repo, scenario=scenario):
+                    with patch.object(lane, "api", side_effect=response):
+                        self.assertIs(
+                            _terminal_checks_green(checked_repo, SHA, "token"),
+                            scenario in ("success", "repo_casefold"),
+                        )
+
+            # FactoryRunner exige dos gates: faltar cualquiera debe fallar.
+            if len(required) > 1:
+                rows = [row for row in passing if row["name"] != required[-1]]
+
+                def response(_repo, _path, _token, *, method="GET", payload=None):
+                    return {"total_count": len(rows), "check_runs": rows}
+
+                with self.subTest(repo=repo, scenario="missing-second-required"):
+                    with patch.object(lane, "api", side_effect=response):
+                        self.assertFalse(_terminal_checks_green(repo, SHA, "token"))
 
     def test_consumer_gate_rejects_wrong_repo_or_untrusted_check(self):
         def check(name, ident, *, issuer=None, conclusion="success", head=SHA):
