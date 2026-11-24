@@ -13,6 +13,7 @@ from unittest.mock import patch
 from scripts.dependabot_lane import create_followup, _terminal_checks_green, _switch_running, reconcile, comment_stale, sweep
 
 from scripts.dependabot_lane import LaneError, _age_over_seven_days, classify, api, read_exact, classify_from_api, main
+import scripts.dependabot_lane as lane
 
 
 SHA = "a" * 40
@@ -293,7 +294,107 @@ class DependabotLaneTests(unittest.TestCase):
         pr_payload["created_at"] = (now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.assertFalse(_age_over_seven_days(pr_payload, now=now))
 
+    def test_consumer_exact_required_ci_gate(self):
+        # Cada consumidor tiene su propio contexto CI obligatorio. Los
+        # fixtures son independientes para que un negativo no contamine otro.
+        cases = {
+            "pl0n3r/Factory": ("Validar",),
+            "pl0n3r/Condor": ("Validar",),
+            "pl0n3r/ControlBot": ("Validar",),
+            "pl0n3r/AutoFactory": ("Validate / Pruebas y smoke Chrome",),
+            "pl0n3r/GrindFlow": ("validate",),
+            "pl0n3r/FactoryRunner": ("validate", "ci / Validar"),
+        }
 
+        def check(name, ident, *, status="completed", conclusion="success"):
+            return {
+                "name": name, "id": ident, "head_sha": SHA,
+                "status": status, "conclusion": conclusion,
+                "app": {"slug": "github-actions", "id": 15368},
+            }
+
+        for repo, required in cases.items():
+            # Incluye siempre un check no canónico en verde.
+            passing = [
+                *[check(name, index + 1) for index, name in enumerate(required)],
+                check("Other passing check", 10),
+            ]
+            for scenario in ("success", "repo_casefold", "missing", "skipped", "pending"):
+                rows = [dict(row) for row in passing]
+                checked_repo = repo.swapcase() if scenario == "repo_casefold" else repo
+                if scenario == "missing":
+                    rows = [row for row in rows if row["name"] != required[0]]
+                elif scenario == "skipped":
+                    rows[0]["conclusion"] = "skipped"
+                elif scenario == "pending":
+                    rows[0]["status"] = "in_progress"
+                    rows[0]["conclusion"] = None
+
+                def response(_repo, _path, _token, *, method="GET", payload=None):
+                    return {"total_count": len(rows), "check_runs": rows}
+
+                with self.subTest(repo=repo, scenario=scenario):
+                    with patch.object(lane, "api", side_effect=response):
+                        self.assertIs(
+                            _terminal_checks_green(checked_repo, SHA, "token"),
+                            scenario in ("success", "repo_casefold"),
+                        )
+
+            # FactoryRunner exige dos gates: faltar cualquiera debe fallar.
+            if len(required) > 1:
+                rows = [row for row in passing if row["name"] != required[-1]]
+
+                def response(_repo, _path, _token, *, method="GET", payload=None):
+                    return {"total_count": len(rows), "check_runs": rows}
+
+                with self.subTest(repo=repo, scenario="missing-second-required"):
+                    with patch.object(lane, "api", side_effect=response):
+                        self.assertFalse(_terminal_checks_green(repo, SHA, "token"))
+
+    def test_consumer_gate_rejects_wrong_repo_or_untrusted_check(self):
+        def check(name, ident, *, issuer=None, conclusion="success", head=SHA):
+            return {"name": name, "id": ident, "head_sha": head,
+                    "status": "completed", "conclusion": conclusion,
+                    "app": issuer or {"slug": "github-actions", "id": 15368}}
+        rows = [check("validate", 1), check("Other check", 2)]
+        def response(_repo, _path, _token, *, method="GET", payload=None):
+            return {"total_count": len(rows), "check_runs": rows}
+        with patch.object(lane, "api", side_effect=response):
+            for repo in ("pl0n3r/brvtal", "pl0n3r/Unknown", "other/GrindFlow"):
+                with self.subTest(repo=repo), self.assertRaisesRegex(
+                    LaneError, "sin gate"
+                ):
+                    _terminal_checks_green(repo, SHA, "token")
+            rows[0] = check("Validar", 1)
+            self.assertFalse(_terminal_checks_green("pl0n3r/GrindFlow", SHA, "token"))
+            rows[0] = check("validate", 1, issuer={"slug": "other", "id": 10})
+            with self.assertRaisesRegex(LaneError, "App no autorizada"):
+                _terminal_checks_green("pl0n3r/GrindFlow", SHA, "token")
+            rows[0] = check("validate", 1, head="b" * 40)
+            with self.assertRaisesRegex(LaneError, "HEAD incorrecto"):
+                _terminal_checks_green("pl0n3r/GrindFlow", SHA, "token")
+            rows[0] = check("validate", 1)
+            rows.append(check("validate", 1, conclusion="failure"))
+            with self.assertRaisesRegex(LaneError, "homónimo contradictorio"):
+                _terminal_checks_green("pl0n3r/GrindFlow", SHA, "token")
+            rows.pop()
+            rows[1]["conclusion"] = "failure"
+            self.assertFalse(_terminal_checks_green("pl0n3r/GrindFlow", SHA, "token"))
+            rows[1]["conclusion"] = "success"
+            rows[0]["conclusion"] = "neutral"
+            self.assertFalse(_terminal_checks_green("pl0n3r/GrindFlow", SHA, "token"))
+            # Un ID antiguo contradictorio no debe escapar porque otro
+            # intento con mayor ID haya quedado en latest.
+            rows[:] = [
+                check("validate", 3),
+                check("validate", 1, conclusion="failure"),
+                check("validate", 1),
+            ]
+            with self.assertRaisesRegex(LaneError, "homónimo contradictorio"):
+                _terminal_checks_green("pl0n3r/GrindFlow", SHA, "token")
+            # Reintentos diferentes son válidos si el último está verde.
+            rows[:] = [check("validate", 1, conclusion="failure"), check("validate", 3)]
+            self.assertTrue(_terminal_checks_green("pl0n3r/GrindFlow", SHA, "token"))
 
 class DependabotLaneCoverageTests(unittest.TestCase):
     """Cobertura de fallos de transporte, carrera, seguridad y rutas privilegiadas."""
@@ -456,6 +557,20 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             rows[0]["head_sha"] = "c" * 40
             with self.assertRaisesRegex(LaneError, "HEAD incorrecto"):
                 _terminal_checks_green("pl0n3r/Factory", SHA, "token")
+
+    def test_acceptance_runner_loads_consumer_gate_exactly_once(self):
+        # Reproduce el cargador aislado de scripts/aceptacion_kit.py para
+        # detectar importaciones/efectos del orden de unittest discover.
+        from scripts.aceptacion_kit import _load_test_module
+
+        loaded = _load_test_module(Path("tests/test_dependabot_lane.py"), Path.cwd())
+        suite = unittest.TestLoader().loadTestsFromName(
+            "DependabotLaneTests.test_consumer_exact_required_ci_gate", loaded
+        )
+        diagnostic = io.StringIO()
+        result = unittest.TextTestRunner(stream=diagnostic, verbosity=2).run(suite)
+        self.assertEqual(result.testsRun, 1, diagnostic.getvalue())
+        self.assertTrue(result.wasSuccessful(), diagnostic.getvalue())
 
     def test_check_runs_pagination_and_invalid_responses(self):
         def row(i):
@@ -840,7 +955,6 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             classify(good, [], base_commit, repo="pl0n3r/Factory", head=SHA)
         with self.assertRaises(LaneError):
             classify(good, [manifest()], base_commit, repo="not-allowed", head=SHA)
-
 
 if __name__ == "__main__":
     unittest.main()
