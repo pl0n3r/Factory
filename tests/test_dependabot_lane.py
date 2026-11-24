@@ -13,6 +13,8 @@ from unittest.mock import patch
 from scripts.dependabot_lane import create_followup, _terminal_checks_green, _switch_running, reconcile, comment_stale, sweep
 
 from scripts.dependabot_lane import LaneError, _age_over_seven_days, classify, api, read_exact, classify_from_api, main
+import scripts.dependabot_lane as lane
+import sys
 
 
 SHA = "a" * 40
@@ -470,26 +472,34 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             return {"name": name, "id": ident, "head_sha": SHA,
                     "status": status, "conclusion": conclusion,
                     "app": {"slug": "github-actions", "id": 15368}}
+        def expect_gate(repo, expected, label):
+            try:
+                actual = _terminal_checks_green(repo, SHA, "token")
+            except Exception as error:
+                print(f"Gate {repo}/{label}: {error!r}", file=sys.stderr)
+                raise
+            if actual is not expected:
+                print(f"Gate {repo}/{label}: {actual!r} != {expected!r}", file=sys.stderr)
+            self.assertIs(actual, expected)
+
         for repo, required in cases.items():
             rows = [check(name, index + 1) for index, name in enumerate(required)]
             rows.append(check("Other passing check", 10))
             def response(_repo, _path, _token, *, method="GET", payload=None):
                 return {"total_count": len(rows), "check_runs": rows}
-            with self.subTest(repo=repo), patch(
-                "scripts.dependabot_lane.api", side_effect=response
-            ):
-                self.assertTrue(_terminal_checks_green(repo, SHA, "token"))
-                self.assertTrue(_terminal_checks_green(repo.swapcase(), SHA, "token"))
+            with self.subTest(repo=repo), patch.object(lane, "api", side_effect=response):
+                expect_gate(repo, True, "all-required")
+                expect_gate(repo.swapcase(), True, "casefold")
                 for required_check in required:
                     removed = next(c for c in rows if c["name"] == required_check)
                     rows.remove(removed)
-                    self.assertFalse(_terminal_checks_green(repo, SHA, "token"))
+                    expect_gate(repo, False, "negative")
                     rows.insert(0, removed)
                     removed["conclusion"] = "skipped"
-                    self.assertFalse(_terminal_checks_green(repo, SHA, "token"))
+                    expect_gate(repo, False, "negative")
                     removed["conclusion"] = "success"
                     removed["status"] = "in_progress"
-                    self.assertFalse(_terminal_checks_green(repo, SHA, "token"))
+                    expect_gate(repo, False, "negative")
                     removed["status"] = "completed"
 
     def test_consumer_gate_rejects_wrong_repo_or_untrusted_check(self):
@@ -500,7 +510,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
         rows = [check("validate", 1), check("Other check", 2)]
         def response(_repo, _path, _token, *, method="GET", payload=None):
             return {"total_count": len(rows), "check_runs": rows}
-        with patch("scripts.dependabot_lane.api", side_effect=response):
+        with patch.object(lane, "api", side_effect=response):
             for repo in ("pl0n3r/brvtal", "pl0n3r/Unknown", "other/GrindFlow"):
                 with self.subTest(repo=repo), self.assertRaisesRegex(
                     LaneError, "sin gate"
