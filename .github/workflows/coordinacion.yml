@@ -281,9 +281,10 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository
     needs: validar-input
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 20
     permissions:
       contents: write
+      actions: write
       checks: read
       issues: write
       pull-requests: write
@@ -312,9 +313,10 @@ jobs:
     if: inputs.operation == 'dependabot-sweep' && github.event_name == 'schedule'
     needs: validar-input
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: write
+      actions: write
       checks: read
       issues: write
       pull-requests: write
