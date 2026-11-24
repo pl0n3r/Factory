@@ -932,12 +932,5 @@ class DependabotLaneCoverageTests(unittest.TestCase):
         with self.assertRaises(LaneError):
             classify(good, [manifest()], base_commit, repo="not-allowed", head=SHA)
 
-
-if __name__.startswith("_factory_acceptance_"):
-    os.write(2, ("GF2207-AC01-IMPORT " + __name__ +
-                 " class=" + str("DependabotLaneTests" in globals()) +
-                 " method=" + str(hasattr(DependabotLaneTests,
-                   "test_consumer_exact_required_ci_gate")) + "\\n").encode())
-
 if __name__ == "__main__":
     unittest.main()
