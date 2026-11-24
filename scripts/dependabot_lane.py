@@ -52,6 +52,12 @@ POST_MERGE_CI = {
 }
 
 
+# Sweep dura 20 min; usar ventana soft de 18 min y reservar al menos
+# 16 min para verificar CI exact-main tras un squash irreversible.
+SWEEP_SOFT_RUNTIME_SECONDS = 18 * 60
+SWEEP_MIN_RECONCILE_SECONDS = 16 * 60
+
+
 class LaneError(ValueError):
     """Entrada ambigua o fuera de autoridad: fail-closed."""
 
@@ -360,10 +366,18 @@ def _switch_running(repo: str, token: str) -> bool:
     )
 
 
-def create_followup(repo: str, number: int, head: str, token: str, *, reason: str, paths: list[str], major_target: str | None = None) -> int:
+def create_followup(repo: str, number: int, head: str, token: str, *, reason: str, paths: list[str], major_target: str | None = None, merge_sha: str | None = None, failure: str | None = None) -> int:
     """Issue idempotente; no conceder autorización de implementación desde metadata de PR."""
-    if reason not in ("major", "workflow", "stale"):
+    if reason not in ("major", "workflow", "stale", "postmerge"):
         raise LaneError("Motivo inválido de escalamiento")
+    if reason == "postmerge":
+        if not isinstance(merge_sha, str) or not HEX_SHA.fullmatch(merge_sha):
+            raise LaneError("Seguimiento posfusión sin SHA exacto")
+        if (not isinstance(failure, str) or not 1 <= len(failure) <= 300
+                or "\n" in failure or "\r" in failure):
+            raise LaneError("Causa posfusión ausente o insegura")
+    elif merge_sha is not None or failure is not None:
+        raise LaneError("Campos posfusión fuera de su alcance")
     if not paths or len(paths) > 3000 or len(set(paths)) != len(paths):
         raise LaneError("Claims de Dependabot ausentes o ambiguos")
     for path in paths:
@@ -374,12 +388,20 @@ def create_followup(repo: str, number: int, head: str, token: str, *, reason: st
             and not (path.split("/")[-1] in MANIFESTS or REQUIREMENTS.fullmatch(path.split("/")[-1]))
         ):
             raise LaneError("Claim de seguimiento fuera de alcance")
+    # Un PR minor puede tener seguimiento stale previo a su squash. Ese
+    # seguimiento NO acredita ni contiene el SHA/cause post-merge: separar
+    # identidades evita reutilizar un issue antiguo sin evidencia recuperable.
+    marker_type = ("factory-dependabot-postmerge" if reason == "postmerge"
+                   else "factory-dependabot-followup")
+    identity = {"version": 1, "repo": repo, "pr": number}
+    if reason == "postmerge":
+        identity["merge_sha"] = merge_sha
     marker = (
-        '<!-- factory-dependabot-followup '
-        + json.dumps({"version": 1, "repo": repo, "pr": number}, sort_keys=True, separators=(",", ":"))
+        '<!-- ' + marker_type + ' '
+        + json.dumps(identity, sort_keys=True, separators=(",", ":"))
         + ' -->'
     )
-    q = quote(f'repo:{repo} is:issue "factory-dependabot-followup" in:body', safe="")
+    q = quote(f'repo:{repo} is:issue "{marker_type}" in:body', safe="")
     response = api(repo, "/search/issues?q=" + q + "&per_page=100", token)
     if not isinstance(response, dict) or response.get("incomplete_results") is not False:
         raise LaneError("Search Issues no verificable")
@@ -397,6 +419,8 @@ def create_followup(repo: str, number: int, head: str, token: str, *, reason: st
         if reason == "major" else
         f"Revisar workflow de dependencias (Dependabot PR #{number})"
         if reason == "workflow" else
+        f"Revalidar CI pos-squash Dependabot (PR #{number})"
+        if reason == "postmerge" else
         f"Desbloquear Dependabot sin CI verde tras 7 días (PR #{number})"
     )
     body = (
@@ -420,6 +444,18 @@ def create_followup(repo: str, number: int, head: str, token: str, *, reason: st
         }, sort_keys=True, separators=(",", ":"))
         + " -->\n"
     )
+    if reason == "postmerge":
+        # El issue se puede reabrir/revalidar sin intentar un segundo merge.
+        body = body.replace('"target":"Validar"', '"target":"validate"')
+        body += (
+            f"\n### Recuperación posfusión (sin nuevo squash)\n"
+            f"SHA fusionado: {merge_sha}\nCausa sanitizada: {failure}\n"
+            "Verificar main contra SHA fusionado. Con identidad exacta, "
+            "despachar GrindFlow CI mediante workflow_dispatch y acreditar "
+            "run y job validate terminales del mismo SHA antes de cerrar. "
+            "Si main avanzó, mantener bloqueo y no atribuir CI ajeno. "
+            "Nunca volver a fusionar el PR.\n"
+        )
     issue = api(repo, f"/repos/{repo}/issues", token, method="POST", payload={
         "title": title, "body": body,
         "labels": ["tipo: mejora", "prioridad: media", "estado: disponible", "rol: seguridad", "rol: qa"],
@@ -463,6 +499,7 @@ def sweep(repo: str, token: str, *, now: datetime) -> list[dict]:
     if not _switch_running(repo, token):
         raise LaneError("Interruptor global distinto de RUNNING")
     result: list[dict] = []
+    sweep_deadline = time.monotonic() + SWEEP_SOFT_RUNTIME_SECONDS
     for page in range(1, 11):
         rows = api(repo, f"/repos/{repo}/pulls?state=open&per_page=100&page={page}", token)
         if not isinstance(rows, list) or len(rows) > 100:
@@ -479,7 +516,12 @@ def sweep(repo: str, token: str, *, now: datetime) -> list[dict]:
             head = (item.get("head") or {}).get("sha")
             if type(number) is not int or not isinstance(head, str) or not HEX_SHA.fullmatch(head):
                 raise LaneError("PR Dependabot de inventario sin HEAD")
-            result.append(reconcile(repo, number, head, token, now=now))
+            if sweep_deadline - time.monotonic() < SWEEP_MIN_RECONCILE_SECONDS:
+                result.append({"pr": number, "deferred": True,
+                               "reason": "insufficient_job_budget"})
+                continue
+            result.append(reconcile(repo, number, head, token, now=now,
+                                    job_deadline=sweep_deadline))
         if len(rows) < 100:
             break
     else:
@@ -547,6 +589,9 @@ def _postmerge_exact_main_ci(repo: str, merged_sha: str, token: str) -> dict:
             if actual.get("status") == "completed":
                 if actual.get("conclusion") != "success":
                     raise LaneError("CI post-merge terminó sin éxito")
+                run_attempt = actual.get("run_attempt")
+                if type(run_attempt) is not int or run_attempt < 1:
+                    raise LaneError("Intento de CI post-merge inválido")
                 jobs = api(repo, f"{prefix}/actions/runs/{run['id']}/jobs?per_page=100", token)
                 if not isinstance(jobs, dict) or type(jobs.get("total_count")) is not int:
                     raise LaneError("Jobs post-merge ilegibles")
@@ -561,6 +606,17 @@ def _postmerge_exact_main_ci(repo: str, merged_sha: str, token: str) -> dict:
                         or matches[0].get("status") != "completed"
                         or matches[0].get("conclusion") != "success"):
                     raise LaneError("Validate post-merge no acreditado en SHA exacto")
+                stable = api(repo, f"{prefix}/actions/runs/{run['id']}", token)
+                if not isinstance(stable, dict) or any((
+                        stable.get("id") != run["id"],
+                        stable.get("run_attempt") != run_attempt,
+                        stable.get("head_sha") != merged_sha,
+                        stable.get("head_branch") != "main",
+                        stable.get("event") != "workflow_dispatch",
+                        stable.get("name") != run_name,
+                        stable.get("status") != "completed",
+                        stable.get("conclusion") != "success")):
+                    raise LaneError("Intento de CI post-merge cambió entre snapshots")
                 require_main()
                 return {"run_id": run["id"], "head_sha": merged_sha,
                         "validate": "success"}
@@ -569,7 +625,7 @@ def _postmerge_exact_main_ci(repo: str, merged_sha: str, token: str) -> dict:
     raise LaneError("CI post-merge sin run terminal dentro del presupuesto")
 
 
-def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -> dict:
+def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime, job_deadline: float | None = None) -> dict:
     """Privilegiado: solo desde workflow_run sobre main, jamás checkout de PR."""
     if os.environ.get("GITHUB_EVENT_NAME") not in ("workflow_run", "schedule"):
         raise LaneError("Mutación requiere workflow_run/schedule confiable")
@@ -616,6 +672,14 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
             raise LaneError("Evidencia de PR/checks cambió antes de auto-merge")
         if not _switch_running(repo, token):
             raise LaneError("Interruptor global cambió antes del squash")
+        # Cada squash de un sweep necesita la ventana completa de CI posfusión.
+        if job_deadline is not None:
+            if type(job_deadline) not in (int, float):
+                raise LaneError("Deadline del barrido inválido")
+            if job_deadline - time.monotonic() < SWEEP_MIN_RECONCILE_SECONDS:
+                return {**result, "auto_merge_enabled": False,
+                        "followup_required": False,
+                        "deferred": "insufficient_job_budget"}
         # El workflow_run se dispara tras finalizar los checks: habilitar
         # GitHub auto-merge en un PR ya mergeable puede fallar (no hay
         # requisitos pendientes). Ejecutar el squash normal con expected SHA,
@@ -627,7 +691,16 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
         merged_sha = response.get("sha")
         if not isinstance(merged_sha, str) or not HEX_SHA.fullmatch(merged_sha):
             raise LaneError("Squash sin SHA verificable")
-        ci = _postmerge_exact_main_ci(repo, merged_sha, token)
+        try:
+            ci = _postmerge_exact_main_ci(repo, merged_sha, token)
+        except LaneError as exc:
+            # Squash irreversible ya confirmado: registrar seguimiento recuperable.
+            followup = create_followup(
+                repo, number, head, token, reason="postmerge",
+                paths=result["file_paths"], merge_sha=merged_sha, failure=str(exc))
+            raise LaneError(
+                f"Squash {merged_sha} confirmado, CI postmerge no acreditado; "
+                f"seguimiento #{followup} registrado") from exc
         return {**result, "merged": True, "merge_sha": merged_sha,
                 "post_merge_ci": ci, "auto_merge_enabled": False,
                 "followup_required": False}
