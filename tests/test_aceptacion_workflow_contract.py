@@ -1,4 +1,8 @@
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -86,6 +90,65 @@ class AcceptanceWorkflowContractTests(unittest.TestCase):
             reusable.index("python3 .factory/scripts/aceptacion_kit.py --checks-only"),
             reusable.index("cd .candidate"),
         )
+
+    def test_trusted_kit_survives_candidate_checkout(self):
+        """Regresión conductual: checkout aislado importa el kit; raíz lo destruye."""
+        reusable = (ROOT / ".github/workflows/aceptacion.yml").read_text(
+            encoding="utf-8"
+        )
+        candidate_step = reusable.split("      - name: Descargar candidato\n", 1)[1]
+        candidate_step = candidate_step.split("\n      - name: ", 1)[0]
+        self.assertIn("path: .candidate", candidate_step)
+        self.assertIn("persist-credentials: false", candidate_step)
+        self.assertNotIn("path: .factory", candidate_step)
+        self.assertTrue((ROOT / "scripts/coordinar_trabajo.py").is_file())
+
+        code = (
+            "import sys\n"
+            "sys.path.insert(0, '.factory')\n"
+            "from scripts.coordinar_trabajo import latest_reservation\n"
+            "print(latest_reservation([])['acceptance_sha256'])\n"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            kit_scripts = workspace / ".factory" / "scripts"
+            kit_scripts.mkdir(parents=True)
+            (kit_scripts / "coordinar_trabajo.py").write_text(
+                "def latest_reservation(comments):\n"
+                "    return {'acceptance_sha256': 'synthetic-only'}\n",
+                encoding="utf-8",
+            )
+            candidate_dir = workspace / ".candidate"
+            candidate_dir.mkdir()
+            (candidate_dir / "stale.txt").write_text("stale", encoding="utf-8")
+
+            # Checkout limitado al candidato: limpiar .candidate no borra .factory.
+            shutil.rmtree(candidate_dir)
+            candidate_dir.mkdir()
+            (candidate_dir / "checked-out.txt").write_text(
+                "candidate", encoding="utf-8"
+            )
+            imported = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=workspace,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(imported.returncode, 0, imported.stderr)
+            self.assertEqual(imported.stdout.strip(), "synthetic-only")
+
+            # Contraejemplo del reusable antiguo: checkout a raíz elimina el kit.
+            shutil.rmtree(workspace / ".factory")
+            missing = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=workspace,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("ModuleNotFoundError", missing.stderr)
 
     def test_documentation_explains_bounded_wait_without_reruns(self):
         doc = (ROOT / "docs/aceptacion-ejecutable.md").read_text(encoding="utf-8")
