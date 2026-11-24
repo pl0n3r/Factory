@@ -28,6 +28,7 @@ jobs:
       github.event.workflow_run.pull_requests[0].head.sha == github.event.workflow_run.head_sha
     permissions:
       contents: write
+      actions: write
       checks: read
       issues: write
       pull-requests: write
@@ -41,6 +42,7 @@ jobs:
     if: github.event_name == 'schedule' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
+      actions: write
       checks: read
       issues: write
       pull-requests: write

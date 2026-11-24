@@ -73,6 +73,15 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
         self.assertNotIn("pr_number:", sweep)
         self.assertNotIn("head_sha:", sweep)
 
+    def test_privileged_callers_grant_actions_write(self):
+        self.assertEqual(CALLER.count("      actions: write"), 2)
+        for name in ("dependabot", "dependabot-sweep"):
+            part = job(CALLER, name)
+            self.assertIn("      contents: write", part)
+            self.assertIn("      actions: write", part)
+            self.assertIn("      checks: read", part)
+        self.assertNotIn("actions: write", CALLER.split("jobs:", 1)[0])
+
     def test_privileged_token_only_two_caller_jobs(self):
         self.assertEqual(CALLER.count("contents: write"), 2)
         for name in ("dependabot", "dependabot-sweep"):
