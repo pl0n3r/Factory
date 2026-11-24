@@ -388,12 +388,20 @@ def create_followup(repo: str, number: int, head: str, token: str, *, reason: st
             and not (path.split("/")[-1] in MANIFESTS or REQUIREMENTS.fullmatch(path.split("/")[-1]))
         ):
             raise LaneError("Claim de seguimiento fuera de alcance")
+    # Un PR minor puede tener seguimiento stale previo a su squash. Ese
+    # seguimiento NO acredita ni contiene el SHA/cause post-merge: separar
+    # identidades evita reutilizar un issue antiguo sin evidencia recuperable.
+    marker_type = ("factory-dependabot-postmerge" if reason == "postmerge"
+                   else "factory-dependabot-followup")
+    identity = {"version": 1, "repo": repo, "pr": number}
+    if reason == "postmerge":
+        identity["merge_sha"] = merge_sha
     marker = (
-        '<!-- factory-dependabot-followup '
-        + json.dumps({"version": 1, "repo": repo, "pr": number}, sort_keys=True, separators=(",", ":"))
+        '<!-- ' + marker_type + ' '
+        + json.dumps(identity, sort_keys=True, separators=(",", ":"))
         + ' -->'
     )
-    q = quote(f'repo:{repo} is:issue "factory-dependabot-followup" in:body', safe="")
+    q = quote(f'repo:{repo} is:issue "{marker_type}" in:body', safe="")
     response = api(repo, "/search/issues?q=" + q + "&per_page=100", token)
     if not isinstance(response, dict) or response.get("incomplete_results") is not False:
         raise LaneError("Search Issues no verificable")

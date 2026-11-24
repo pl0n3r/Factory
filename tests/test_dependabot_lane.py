@@ -211,13 +211,19 @@ class DependabotLaneTests(unittest.TestCase):
         self.assertEqual(followup.call_args.kwargs["failure"], "validate falló")
 
         created = []
+        # Un issue stale anterior no puede sustituir al recibo postmerge:
+        # carece de merge_sha y causa, incluso si referencia al mismo PR.
+        stale = {"number": 8999, "body":
+                 '<!-- factory-dependabot-followup '
+                 '{"pr":99,"repo":"pl0n3r/GrindFlow","version":1} -->'}
         def issue_api(_repo, path, _token, *, method="GET", payload=None):
             if method == "POST":
                 created.append(payload)
                 return {"number": 9001}
-            return {"total_count": len(created), "incomplete_results": False,
-                    "items": ([{"number": 9001, "body": created[0]["body"]}]
-                              if created else [])}
+            items = [stale] + ([{"number": 9001, "body": created[0]["body"]}]
+                               if created else [])
+            return {"total_count": len(items), "incomplete_results": False,
+                    "items": items}
         with patch("scripts.dependabot_lane.api", side_effect=issue_api):
             for _ in range(2):
                 self.assertEqual(create_followup("pl0n3r/GrindFlow", 99, SHA, "token",
@@ -225,6 +231,7 @@ class DependabotLaneTests(unittest.TestCase):
                     merge_sha=merged_sha, failure="validate falló"), 9001)
         self.assertEqual(len(created), 1)
         self.assertIn(merged_sha, created[0]["body"])
+        self.assertIn("factory-dependabot-postmerge", created[0]["body"])
         self.assertIn("workflow_dispatch", created[0]["body"])
 
     def test_red_minor_never_calls_merge(self):
