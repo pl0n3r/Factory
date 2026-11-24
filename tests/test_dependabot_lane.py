@@ -383,6 +383,18 @@ class DependabotLaneTests(unittest.TestCase):
             rows[1]["conclusion"] = "success"
             rows[0]["conclusion"] = "neutral"
             self.assertFalse(_terminal_checks_green("pl0n3r/GrindFlow", SHA, "token"))
+            # Un ID antiguo contradictorio no debe escapar porque otro
+            # intento con mayor ID haya quedado en latest.
+            rows[:] = [
+                check("validate", 3),
+                check("validate", 1, conclusion="failure"),
+                check("validate", 1),
+            ]
+            with self.assertRaisesRegex(LaneError, "homónimo contradictorio"):
+                _terminal_checks_green("pl0n3r/GrindFlow", SHA, "token")
+            # Reintentos diferentes son válidos si el último está verde.
+            rows[:] = [check("validate", 1, conclusion="failure"), check("validate", 3)]
+            self.assertTrue(_terminal_checks_green("pl0n3r/GrindFlow", SHA, "token"))
 
 class DependabotLaneCoverageTests(unittest.TestCase):
     """Cobertura de fallos de transporte, carrera, seguridad y rutas privilegiadas."""
