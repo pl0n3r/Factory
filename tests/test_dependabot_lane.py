@@ -460,6 +460,16 @@ class DependabotLaneCoverageTests(unittest.TestCase):
                 _terminal_checks_green("pl0n3r/Factory", SHA, "token")
 
     def test_consumer_exact_required_ci_gate(self):
+        # Diagnostico temporal: el runner de aceptacion oculta el stream unittest.
+        print("GF2207-AC01-ENTRY", file=sys.stderr)
+        def reveal_isolated_failures():
+            outcome = getattr(self, "_outcome", None)
+            result = getattr(outcome, "result", None)
+            if result is not None:
+                for kind in ("failures", "errors"):
+                    for _, detail in getattr(result, kind, ()):
+                        print("GF2207-AC01-" + kind + ": " + detail[-2500:], file=sys.stderr)
+        self.addCleanup(reveal_isolated_failures)
         cases = {
             "pl0n3r/Factory": ("Validar",),
             "pl0n3r/Condor": ("Validar",),
