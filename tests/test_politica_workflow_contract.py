@@ -409,8 +409,8 @@ print(json.dumps(pages[index]))
                 "EVAL_MARKER": str(marker),
             })
             result = subprocess.run(
-                ["bash", "-c", "set -euo pipefail\n" + shell +
-                 '\nprintf "1" > "$EVAL_MARKER"\n'],
+                ["bash", "-c", "set -euo pipefail\nwhile true; do\n" + shell +
+                 '\nbreak\ndone\nprintf "1" > "$EVAL_MARKER"\n'],
                 env=env, capture_output=True, text=True, timeout=25)
             self.assertEqual(result.returncode == 0, expected_pass,
                              msg=result.stderr[-2500:])
