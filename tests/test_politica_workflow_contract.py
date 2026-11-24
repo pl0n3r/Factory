@@ -409,8 +409,8 @@ print(json.dumps(pages[index]))
                 "EVAL_MARKER": str(marker),
             })
             result = subprocess.run(
-                ["bash", "-c", "set -euo pipefail\n" + shell +
-                 '\nprintf "1" > "$EVAL_MARKER"\n'],
+                ["bash", "-c", "set -euo pipefail\nwhile true; do\n" + shell +
+                 '\nbreak\ndone\nprintf "1" > "$EVAL_MARKER"\n'],
                 env=env, capture_output=True, text=True, timeout=25)
             self.assertEqual(result.returncode == 0, expected_pass,
                              msg=result.stderr[-2500:])
@@ -498,6 +498,159 @@ print(json.dumps(pages[index]))
         for reason, pages in cases.items():
             with self.subTest(reason=reason):
                 self._execute_checks_snapshot_shell(pages, expected_pass=False)
+
+    def _execute_gate_wait_shell(self, pages, *, expected_pass,
+                                 age=0, identity_ok=True, cycle=False,
+                                 expected_calls=None, expected_error=None,
+                                 expected_raw=None, gate_status=0):
+        """Ejecuta el POLICY_GATE_WAIT Bash real con REST y reloj simulados."""
+        if shutil.which("jq") is None:
+            self.skipTest("jq requerido para ejecutar el Bash real")
+        start = "          # POLICY_GATE_WAIT_BEGIN\n"
+        end = "          # POLICY_GATE_WAIT_END"
+        self.assertEqual(W.count(start), 1)
+        self.assertEqual(W.count(end), 1)
+        shell = textwrap.dedent(W.split(start, 1)[1].split(end, 1)[0])
+        self.assertEqual(shell.count("gate_wait_started=$SECONDS"), 1)
+        # Solo el fixture desplaza el reloj inicial; el límite productivo es igual.
+        shell = shell.replace("gate_wait_started=$SECONDS",
+                              "gate_wait_started=$((SECONDS - MOCK_GATE_AGE))")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gh = root / "gh"
+            gh.write_text("""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+counter = Path(os.environ["MOCK_GH_COUNTER"])
+index = int(counter.read_text()) if counter.exists() else 0
+counter.write_text(str(index + 1))
+pages = json.loads(os.environ["MOCK_GH_RESPONSES"])
+if not any("check-runs?per_page=100&page=" in arg for arg in sys.argv):
+    sys.exit(23)
+if index >= len(pages):
+    if os.environ.get("MOCK_CYCLE") != "1":
+        sys.exit(22)
+    page = pages[index % len(pages)]
+else:
+    page = pages[index]
+if page is None:
+    sys.exit(22)
+print(json.dumps(page))
+""", encoding="utf-8")
+            gh.chmod(0o755)
+            checks = root / "checks.ndjson"
+            marker = root / "authorized"
+            evaluated = root / "evaluated"
+            identity = root / "identity"
+            env = dict(os.environ)
+            env.update({
+                "PATH": directory + os.pathsep + env.get("PATH", ""),
+                "REPOSITORY": "pl0n3r/Factory", "PR_HEAD_SHA": "a" * 40,
+                "checks_file": str(checks), "checks_json": str(root / "page.json"),
+                "MAX_EVIDENCE_BYTES": "2000000", "MAX_PUBLIC_CHECKS": "500",
+                "MOCK_GH_COUNTER": str(root / "calls"),
+                "MOCK_GH_RESPONSES": json.dumps(pages),
+                "MOCK_CYCLE": "1" if cycle else "0",
+                "MOCK_GATE_AGE": str(age),
+                "MOCK_IDENTITY_OK": "1" if identity_ok else "0",
+                "MOCK_GATE_STATUS": str(gate_status),
+                "EVAL_LOG": str(evaluated), "RECHECK_LOG": str(identity),
+                "AUTHORIZED_MARKER": str(marker),
+            })
+            stubs = """
+set -euo pipefail
+SECONDS=0
+gate_readiness() {
+  printf 'evaluated\\n' >> "$EVAL_LOG"
+  return "$MOCK_GATE_STATUS"
+}
+recheck_pr_identity() {
+  printf 'checked\\n' >> "$RECHECK_LOG"
+  [[ "$MOCK_IDENTITY_OK" == "1" ]]
+}
+sleep() { SECONDS=$((SECONDS + $1)); }
+GATE_WAIT_SECONDS=300
+"""
+            result = subprocess.run(
+                ["bash", "-c", stubs + shell +
+                 '\nprintf "authorized\\n" > "$AUTHORIZED_MARKER"\n'],
+                env=env, capture_output=True, text=True, timeout=25)
+            self.assertEqual(result.returncode == 0, expected_pass,
+                             msg=result.stderr[-1500:])
+            self.assertEqual(marker.exists(), expected_pass,
+                             "No autorizar sin snapshots estables y gates verdes")
+            if expected_error:
+                self.assertIn(expected_error, result.stdout + result.stderr)
+            if expected_calls is not None:
+                self.assertEqual(int((root / "calls").read_text()), expected_calls)
+            if expected_raw is not None:
+                self.assertEqual(
+                    [json.loads(row) for row in checks.read_text().splitlines()],
+                    expected_raw, "El evaluador debe recibir evidencia REST original")
+            return (int((root / "calls").read_text()),
+                    evaluated.read_text().splitlines() if evaluated.exists() else [],
+                    identity.read_text().splitlines() if identity.exists() else [])
+
+    def test_gate_wait_retries_transient_snapshot_drift(self):
+        """AC-01: tres snapshots válidos distintos NO agotan el presupuesto."""
+        p = self._mock_check_page
+        first = [p(1, (1,)), p(1, (2,)), p(1, (3,))]
+        settled = p(1, (4,))
+        settled["check_runs"][0]["output"] = {"title": "verde", "annotations_count": 0}
+        calls, evaluated, identity = self._execute_gate_wait_shell(
+            [*first, settled, settled], expected_pass=True, expected_calls=5,
+            expected_raw=settled["check_runs"])
+        self.assertEqual(calls, 5)
+        self.assertEqual(evaluated, ["evaluated"])
+        self.assertEqual(identity, ["checked"], "Revalidar identidad antes del reintento")
+
+        # total_count cambiante entre páginas también es deriva transitoria.
+        drifting = [p(119, range(1, 101)), p(120, range(101, 121))] * 3
+        calls, evaluated, identity = self._execute_gate_wait_shell(
+            [*drifting, settled, settled], expected_pass=True,
+            expected_calls=8, expected_raw=settled["check_runs"])
+        self.assertEqual(calls, 8)
+        self.assertEqual(evaluated, ["evaluated"])
+        self.assertEqual(identity, ["checked"])
+
+    def test_gate_wait_snapshot_drift_deadline_and_identity_fail_closed(self):
+        """AC-02: deriva permanente, deadline, identidad y REST corrupto no pasan."""
+        p = self._mock_check_page
+        different = [p(1, (11,)), p(1, (12,)), p(1, (13,))]
+        _, evaluated, identity = self._execute_gate_wait_shell(
+            different, expected_pass=False, age=292, cycle=True,
+            expected_calls=6, expected_error="sin dos snapshots completos y estables dentro del plazo")
+        self.assertEqual(evaluated, [])
+        self.assertEqual(identity, ["checked"])
+
+        _, evaluated, identity = self._execute_gate_wait_shell(
+            different, expected_pass=False, identity_ok=False,
+            expected_calls=3, expected_error="Identidad HEAD/BASE cambió")
+        self.assertEqual(evaluated, [])
+        self.assertEqual(identity, ["checked"])
+
+        self._execute_gate_wait_shell(
+            [different[0], different[0]], expected_pass=False, age=300,
+            expected_calls=2,
+            expected_error="Gates requeridos sin evidencia terminal verde")
+
+        for label, pages, diagnostic in (
+            ("HTTP", [None], "No se pudieron leer check-runs autenticados"),
+            ("JSON", [{"total_count": "uno", "check_runs": []}],
+             "Página autenticada de check-runs inválida"),
+            ("duplicado", [p(2, (1, 1))],
+             "IDs de check-runs autenticados inválidos o duplicados"),
+            ("truncado", [p(2, (1,)), p(2, ()), p(2, ()), p(2, ()), p(2, ())],
+             "Evidencia incompleta de check-runs autenticados"),
+        ):
+            with self.subTest(label=label):
+                _, evaluated, _ = self._execute_gate_wait_shell(
+                    pages, expected_pass=False, expected_error=diagnostic)
+                self.assertEqual(evaluated, [])
+        _, evaluated, _ = self._execute_gate_wait_shell(
+            [different[0], different[0]], expected_pass=False,
+            gate_status=1, expected_error=None)
+        self.assertEqual(evaluated, ["evaluated"])
 
     def test_check_collection_does_not_bypass_policy_gates_or_authentication(self):
         """AC-03: REST autenticada read-only, exact SHA y Policy obligatoria."""
