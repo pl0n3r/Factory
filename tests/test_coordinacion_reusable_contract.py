@@ -99,13 +99,21 @@ class T(unittest.TestCase):
     def test_template_callers_grant_reusable_permission_envelope(self):
         """Cada caller concede el máximo envelope que GitHub valida al cargar el reusable."""
         reusable_jobs = job_blocks(W)
+        # Los callers legados ejecutan comment/label/pr/validate/issue/sweep:
+        # los jobs exclusivos Dependabot requieren su propio caller con actions:write.
+        legacy_operations = ("validar-input", "comentario", "etiqueta",
+                             "pr", "validar-pr", "issue", "sweep")
         maximum = {}
-        for block in reusable_jobs.values():
+        for name in legacy_operations:
+            block = reusable_jobs[name]
             for scope, level in permissions(block).items():
                 if PERMISSION_LEVEL[level] > PERMISSION_LEVEL.get(maximum.get(scope, "none"), 0):
                     maximum[scope] = level
 
         self.assertEqual(maximum.get("checks"), "write")
+        self.assertNotIn("actions", maximum)
+        for name in ("dependabot", "dependabot-sweep"):
+            self.assertEqual(permissions(reusable_jobs[name]).get("actions"), "write")
         callers = {
             name: block
             for name, block in job_blocks(TEMPLATE).items()
@@ -131,8 +139,14 @@ class T(unittest.TestCase):
             "pull-requests": "write",
             "checks": "write",
         }
+        # Compatibilidad: la plantilla histórica no invoca los jobs Dependabot.
+        # Su envelope continúa idéntico a v1.0.18; el permiso nuevo se exige
+        # exclusivamente al caller específico de Dependabot.
+        legacy_operations = ("validar-input", "comentario", "etiqueta",
+                             "pr", "validar-pr", "issue", "sweep")
         maximum = {}
-        for block in job_blocks(W).values():
+        for name in legacy_operations:
+            block = job_blocks(W)[name]
             for scope, level in permissions(block).items():
                 if PERMISSION_LEVEL[level] > PERMISSION_LEVEL.get(maximum.get(scope, "none"), 0):
                     maximum[scope] = level

@@ -158,7 +158,7 @@ class DependabotLaneTests(unittest.TestCase):
         writes = []
         def api_stub(repo, path, token, *, method="GET", payload=None):
             writes.append((method, path, payload))
-            self.assertEqual(repo, "pl0n3r/Factory")
+            self.assertEqual(repo, "pl0n3r/GrindFlow")
             return {"merged": True, "sha": "b" * 40}
         with (
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
@@ -169,11 +169,16 @@ class DependabotLaneTests(unittest.TestCase):
             patch("scripts.dependabot_lane._terminal_checks_green",
                   return_value=True),
             patch("scripts.dependabot_lane.api", side_effect=api_stub),
+            patch("scripts.dependabot_lane._postmerge_exact_main_ci",
+                  return_value={"run_id": 13, "head_sha": "b" * 40,
+                                "validate": "success"}) as postmerge,
         ):
-            result = reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+            result = reconcile("pl0n3r/GrindFlow", 99, SHA, "token", now=now)
         self.assertTrue(result["merged"])
         self.assertEqual(reader.call_count, 2)
-        self.assertEqual(writes, [("PUT", "/repos/pl0n3r/Factory/pulls/99/merge",
+        postmerge.assert_called_once_with("pl0n3r/GrindFlow", "b" * 40, "token")
+        self.assertEqual(result["post_merge_ci"]["validate"], "success")
+        self.assertEqual(writes, [("PUT", "/repos/pl0n3r/GrindFlow/pulls/99/merge",
                                   {"sha": SHA, "merge_method": "squash"})])
 
     def test_red_minor_never_calls_merge(self):
@@ -920,7 +925,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
                     patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_REF": ref}),
                 ):
                     with self.assertRaises(LaneError):
-                        reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+                        reconcile("pl0n3r/GrindFlow", 99, SHA, "token", now=now)
         with (
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
                                     "GITHUB_REF": "refs/heads/main"}),
@@ -929,7 +934,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             patch("scripts.dependabot_lane.api", side_effect=AssertionError("no merge")),
         ):
             with self.assertRaisesRegex(LaneError, "RUNNING"):
-                reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+                reconcile("pl0n3r/GrindFlow", 99, SHA, "token", now=now)
         changed = {**lane, "file_paths": ["composer.lock"]}
         with (
             patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run",
@@ -941,7 +946,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             patch("scripts.dependabot_lane.api", side_effect=AssertionError("no merge")),
         ):
             with self.assertRaisesRegex(LaneError, "cambió"):
-                reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+                reconcile("pl0n3r/GrindFlow", 99, SHA, "token", now=now)
 
     def test_reconcile_denies_check_race_and_unverified_merge_response(self):
         now = datetime(2026, 11, 22, tzinfo=timezone.utc)
@@ -956,7 +961,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             patch("scripts.dependabot_lane.api", side_effect=AssertionError("no merge")),
         ):
             with self.assertRaisesRegex(LaneError, "cambió"):
-                reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+                reconcile("pl0n3r/GrindFlow", 99, SHA, "token", now=now)
         with (
             patch.dict(os.environ, environment),
             patch("scripts.dependabot_lane.read_exact", return_value=(source, lane)),
@@ -965,7 +970,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             patch("scripts.dependabot_lane.api", side_effect=AssertionError("no merge")),
         ):
             with self.assertRaisesRegex(LaneError, "Interruptor global cambió"):
-                reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+                reconcile("pl0n3r/GrindFlow", 99, SHA, "token", now=now)
         for response in ({"merged": False, "sha": "b" * 40},
                          {"merged": True, "sha": "not a SHA"}):
             with (
@@ -977,7 +982,7 @@ class DependabotLaneCoverageTests(unittest.TestCase):
                 patch("scripts.dependabot_lane.api", return_value=response),
             ):
                 with self.assertRaises(LaneError):
-                    reconcile("pl0n3r/Factory", 99, SHA, "token", now=now)
+                    reconcile("pl0n3r/GrindFlow", 99, SHA, "token", now=now)
 
     def test_cli_classify_reconcile_sweep_and_failures(self):
         args = ["--repo", "pl0n3r/Factory", "--pr", "99", "--head", SHA]
