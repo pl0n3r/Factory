@@ -160,13 +160,43 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .factory
           persist-credentials: false
-      - env:
+      # Clasificar solo PR abierto; la API autenticada verifica bot/app, firma,
+      # diff permitido, semver y HEAD/BASE. Error => job fallido sin mutaciones V3.
+      - name: Clasificar Dependabot oficial antes de sincronizar
+        id: dependabot-lane
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.action != 'closed' &&
+          github.event.pull_request.user.login == 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORIO: ${{ github.repository }}
+          PR: ${{ inputs.pr_number }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/dependabot_lane.py classify --repo "$REPOSITORIO" --pr "$PR" --head "$HEAD"
+          echo 'approved=true' >> "$GITHUB_OUTPUT"
+
+      # El clasificador exige state=open: nunca usarlo para cierres del bot.
+      # El cierre humano conserva pr-event; el del bot no toca leases ajenas.
+      - name: Sincronizar PR V3
+        if: >-
+          steps.dependabot-lane.outputs.approved != 'true' &&
+          !(
+            github.event_name == 'pull_request' &&
+            github.event.action == 'closed' &&
+            github.event.pull_request.user.login == 'dependabot[bot]'
+          )
+        env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORIO: ${{ github.repository }}
           FACTORY_COORDINATION_PROFILE: ${{ inputs.profile }}
           PR: ${{ inputs.pr_number }}
           ACTION: ${{ inputs.action }}
-        run: python3 .factory/scripts/coordinar_trabajo.py pr-event --repo "$REPOSITORIO" --pr "$PR" --action "$ACTION"
+        run: |
+          set -euo pipefail
+          python3 .factory/scripts/coordinar_trabajo.py pr-event --repo "$REPOSITORIO" --pr "$PR" --action "$ACTION"
 
   issue:
     name: Sincronizar Issue
