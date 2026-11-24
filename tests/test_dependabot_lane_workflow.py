@@ -26,11 +26,14 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
         self.assertIn("permissions:\n  contents: read", REUSABLE)
         for name in ("dependabot", "dependabot-sweep"):
             self.assertIn("      contents: write", job(REUSABLE, name))
+            self.assertIn("      actions: write", job(REUSABLE, name))
             self.assertIn("      checks: read", job(REUSABLE, name))
             self.assertIn("      issues: write", job(REUSABLE, name))
             self.assertIn("      pull-requests: write", job(REUSABLE, name))
+        self.assertEqual(REUSABLE.count("      actions: write"), 2)
         for name in ("validar-input", "etiqueta", "validar-pr"):
             self.assertNotIn("contents: write", job(REUSABLE, name))
+            self.assertNotIn("actions: write", job(REUSABLE, name))
         self.assertIn("contents: read", job(REUSABLE, "validar-pr"))
 
     def test_caller_is_only_trusted_ci_run_and_daily_schedule(self):

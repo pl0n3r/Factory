@@ -396,6 +396,91 @@ class DependabotLaneTests(unittest.TestCase):
             rows[:] = [check("validate", 1, conclusion="failure"), check("validate", 3)]
             self.assertTrue(_terminal_checks_green("pl0n3r/GrindFlow", SHA, "token"))
 
+    def test_postmerge_exact_main_dispatch_and_success(self):
+        merge_sha = "b" * 40
+        workflow = "grindflow-ci.yml"
+        sent = []
+        run = {
+            "id": 1723, "name": "GrindFlow CI", "event": "workflow_dispatch",
+            "head_branch": "main", "head_sha": merge_sha,
+            "status": "completed", "conclusion": "success",
+        }
+
+        def mocked_api(repo, path, token, *, method="GET", payload=None):
+            self.assertEqual(repo, "pl0n3r/GrindFlow")
+            if path.endswith("/git/ref/heads/main"):
+                return {"object": {"sha": merge_sha}}
+            if "/dispatches" in path:
+                self.assertEqual(method, "POST")
+                self.assertEqual(payload, {"ref": "main"})
+                sent.append(path)
+                return None
+            if "/runs?event=" in path:
+                return {"total_count": 1 if sent else 0,
+                        "workflow_runs": [run] if sent else []}
+            if path.endswith("/actions/runs/1723"):
+                return run
+            if path.endswith("/actions/runs/1723/jobs?per_page=100"):
+                return {"total_count": 1, "jobs": [{
+                    "name": "validate", "head_sha": merge_sha,
+                    "status": "completed", "conclusion": "success",
+                }]}
+            raise AssertionError(path)
+
+        with patch("scripts.dependabot_lane.api", side_effect=mocked_api):
+            result = lane._postmerge_exact_main_ci("pl0n3r/GrindFlow", merge_sha, "token")
+        self.assertEqual(result, {"run_id": 1723, "head_sha": merge_sha,
+                                  "validate": "success"})
+        self.assertEqual(len(sent), 1)
+
+    def test_postmerge_rejects_wrong_sha_or_failure(self):
+        merge_sha = "b" * 40
+        for fault in ("wrong-main", "wrong-run-sha", "failed-run", "failed-validate",
+                      "duplicate-run"):
+            with self.subTest(fault=fault):
+                posted = []
+                run = {
+                    "id": 1723, "name": "GrindFlow CI", "event": "workflow_dispatch",
+                    "head_branch": "main", "head_sha": (
+                        "c" * 40 if fault == "wrong-run-sha" else merge_sha),
+                    "status": "completed", "conclusion": (
+                        "failure" if fault == "failed-run" else "success"),
+                }
+
+                def fake_api(_repo, path, _token, *, method="GET", payload=None):
+                    if path.endswith("/git/ref/heads/main"):
+                        return {"object": {"sha": (
+                            "c" * 40 if fault == "wrong-main" else merge_sha)}}
+                    if path.endswith("/dispatches"):
+                        posted.append(path)
+                        return None
+                    if "/runs?event=" in path:
+                        rows = [run] if posted else []
+                        if posted and fault == "duplicate-run":
+                            rows.append({**run, "id": 1724})
+                        return {"total_count": len(rows), "workflow_runs": rows}
+                    if path.endswith("/actions/runs/1723"):
+                        return run
+                    if path.endswith("/actions/runs/1723/jobs?per_page=100"):
+                        return {"total_count": 1, "jobs": [{
+                            "name": "validate", "head_sha": merge_sha,
+                            "status": "completed", "conclusion": (
+                                "failure" if fault == "failed-validate" else "success"),
+                        }]}
+                    raise AssertionError(path)
+
+                with patch("scripts.dependabot_lane.api", side_effect=fake_api):
+                    with self.assertRaises(LaneError):
+                        lane._postmerge_exact_main_ci(
+                            "pl0n3r/GrindFlow", merge_sha, "token")
+                if fault == "wrong-main":
+                    self.assertEqual(posted, [])
+
+        with patch("scripts.dependabot_lane.api", side_effect=AssertionError("no dispatch")):
+            with self.assertRaisesRegex(LaneError, "capacidad"):
+                lane._postmerge_exact_main_ci("pl0n3r/Factory", merge_sha, "token")
+
+
 class DependabotLaneCoverageTests(unittest.TestCase):
     """Cobertura de fallos de transporte, carrera, seguridad y rutas privilegiadas."""
 
@@ -433,6 +518,12 @@ class DependabotLaneCoverageTests(unittest.TestCase):
         with patch("scripts.dependabot_lane.urlopen", side_effect=URLError("offline")):
             with self.assertRaisesRegex(LaneError, "URLError"):
                 api("pl0n3r/Factory", "/repos/pl0n3r/Factory/issues", "token")
+        class NoContent(io.BytesIO):
+            status = 204
+        with patch("scripts.dependabot_lane.urlopen", return_value=NoContent(b"")):
+            self.assertIsNone(api("pl0n3r/GrindFlow",
+                                  "/repos/pl0n3r/GrindFlow/actions/workflows/grindflow-ci.yml/dispatches",
+                                  "token", method="POST", payload={"ref": "main"}))
         with patch("scripts.dependabot_lane.urlopen", return_value=io.BytesIO(b"not json")):
             with self.assertRaisesRegex(LaneError, "JSONDecodeError"):
                 api("pl0n3r/Factory", "/repos/pl0n3r/Factory/issues", "token")

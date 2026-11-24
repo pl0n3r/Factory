@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
@@ -41,6 +42,13 @@ CANONICAL_CI_GATES = {
     "pl0n3r/autofactory": ("Validate / Pruebas y smoke Chrome",),
     "pl0n3r/grindflow": ("validate",),
     "pl0n3r/factoryrunner": ("validate", "ci / Validar"),
+}
+
+
+# Solo el workflow nativo del consumidor auditado puede recibir CI post-squash.
+# Ampliar el mapa exige verificar que workflow_dispatch ejecuta gates reales.
+POST_MERGE_CI = {
+    "pl0n3r/grindflow": ("grindflow-ci.yml", "GrindFlow CI", "validate"),
 }
 
 
@@ -180,6 +188,10 @@ def api(repo: str, path: str, token: str, *, method: str = "GET", payload: objec
     })
     try:
         with urlopen(req, timeout=20) as response:
+            if getattr(response, "status", None) == 204:
+                if response.read():
+                    raise LaneError("Dispatch 204 contiene un cuerpo inesperado")
+                return None
             return json.load(response)
     except (HTTPError, URLError, ValueError, TimeoutError) as exc:
         raise LaneError(f"API GitHub no verificable ({type(exc).__name__})") from exc
@@ -475,6 +487,88 @@ def sweep(repo: str, token: str, *, now: datetime) -> list[dict]:
     return result
 
 
+def _postmerge_exact_main_ci(repo: str, merged_sha: str, token: str) -> dict:
+    """Dispatch protegido y recibo terminal sobre EL SHA del squash, nunca main por inferencia."""
+    if not HEX_SHA.fullmatch(merged_sha):
+        raise LaneError("SHA squash no verificable")
+    target = POST_MERGE_CI.get(repo.casefold())
+    if target is None:
+        raise LaneError("Consumidor sin capacidad CI post-merge auditada")
+    workflow, run_name, required_job = target
+    prefix = f"/repos/{repo}"
+    runs_path = f"{prefix}/actions/workflows/{workflow}/runs?event=workflow_dispatch&branch=main&per_page=100"
+
+    def require_main() -> None:
+        ref = api(repo, f"{prefix}/git/ref/heads/main", token)
+        if not isinstance(ref, dict) or (ref.get("object") or {}).get("sha") != merged_sha:
+            raise LaneError("main avanzó o no coincide con el squash; CI exacta abortada")
+
+    def inventory() -> list[dict]:
+        payload = api(repo, runs_path, token)
+        if not isinstance(payload, dict) or type(payload.get("total_count")) is not int:
+            raise LaneError("Inventario de runs no verificable")
+        rows = payload.get("workflow_runs")
+        if not isinstance(rows, list) or len(rows) > 100 or len(rows) > payload["total_count"]:
+            raise LaneError("Inventario de runs incompleto")
+        if any(not isinstance(row, dict) or type(row.get("id")) is not int for row in rows):
+            raise LaneError("Identidad de run inválida")
+        return rows
+
+    require_main()
+    baseline = max((run["id"] for run in inventory()), default=0)
+    require_main()
+    dispatched = api(repo, f"{prefix}/actions/workflows/{workflow}/dispatches",
+                     token, method="POST", payload={"ref": "main"})
+    if dispatched is not None:
+        raise LaneError("Dispatch sin respuesta HTTP 204 inequívoca")
+
+    # El dispatch REST no devuelve run_id. Correlacionar por ID nuevo,
+    # workflow permitido, SHA exacto y ausencia de concurrencia ambigua.
+    for attempt in range(90):
+        require_main()
+        created = [run for run in inventory() if run["id"] > baseline]
+        if len(created) > 1:
+            raise LaneError("Múltiples dispatches sin correlación única")
+        if created:
+            run = created[0]
+            if (run.get("head_sha") != merged_sha
+                    or run.get("head_branch") != "main"
+                    or run.get("event") != "workflow_dispatch"
+                    or run.get("name") != run_name):
+                raise LaneError("Run post-merge con identidad o SHA distintos")
+            actual = api(repo, f"{prefix}/actions/runs/{run['id']}", token)
+            if not isinstance(actual, dict) or any((
+                    actual.get("id") != run["id"],
+                    actual.get("head_sha") != merged_sha,
+                    actual.get("head_branch") != "main",
+                    actual.get("event") != "workflow_dispatch",
+                    actual.get("name") != run_name)):
+                raise LaneError("Run mutó identidad durante comprobación")
+            if actual.get("status") == "completed":
+                if actual.get("conclusion") != "success":
+                    raise LaneError("CI post-merge terminó sin éxito")
+                jobs = api(repo, f"{prefix}/actions/runs/{run['id']}/jobs?per_page=100", token)
+                if not isinstance(jobs, dict) or type(jobs.get("total_count")) is not int:
+                    raise LaneError("Jobs post-merge ilegibles")
+                rows = jobs.get("jobs")
+                if (not isinstance(rows, list) or len(rows) != jobs["total_count"]
+                        or len(rows) > 100):
+                    raise LaneError("Jobs post-merge incompletos")
+                matches = [job for job in rows if isinstance(job, dict)
+                           and job.get("name") == required_job]
+                if (len(matches) != 1
+                        or matches[0].get("head_sha") != merged_sha
+                        or matches[0].get("status") != "completed"
+                        or matches[0].get("conclusion") != "success"):
+                    raise LaneError("Validate post-merge no acreditado en SHA exacto")
+                require_main()
+                return {"run_id": run["id"], "head_sha": merged_sha,
+                        "validate": "success"}
+        if attempt < 89:
+            time.sleep(10)
+    raise LaneError("CI post-merge sin run terminal dentro del presupuesto")
+
+
 def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -> dict:
     """Privilegiado: solo desde workflow_run sobre main, jamás checkout de PR."""
     if os.environ.get("GITHUB_EVENT_NAME") not in ("workflow_run", "schedule"):
@@ -512,6 +606,9 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
     if check_error and not _age_over_seven_days(pr, now=now):
         raise LaneError("Evidencia de checks desconocida; no autorizar merge")
     if result["policy"] == "auto" and green:
+        # Rechazar consumidores sin CI dispatch exact-main ANTES del merge irreversible.
+        if repo.casefold() not in POST_MERGE_CI:
+            raise LaneError("Consumidor sin capacidad CI post-merge auditada")
         # Se usa la política de auto-merge de GitHub, jamás un merge directo
         # o --admin. La protección de rama mantiene su propia autoridad.
         latest, last_result = read_exact(repo, number, head, token)
@@ -530,8 +627,10 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime) -
         merged_sha = response.get("sha")
         if not isinstance(merged_sha, str) or not HEX_SHA.fullmatch(merged_sha):
             raise LaneError("Squash sin SHA verificable")
+        ci = _postmerge_exact_main_ci(repo, merged_sha, token)
         return {**result, "merged": True, "merge_sha": merged_sha,
-                "auto_merge_enabled": False, "followup_required": False}
+                "post_merge_ci": ci, "auto_merge_enabled": False,
+                "followup_required": False}
     if _age_over_seven_days(pr, now=now) and not green:
         issue = create_followup(repo, number, head, token, reason="stale", paths=result["file_paths"])
         comment_stale(repo, number, issue, token)
