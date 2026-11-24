@@ -506,7 +506,7 @@ print(json.dumps(pages[index]))
         """Ejecuta el POLICY_GATE_WAIT Bash real con REST y reloj simulados."""
         if shutil.which("jq") is None:
             self.skipTest("jq requerido para ejecutar el Bash real")
-        start = "          # POLICY_GATE_WAIT_BEGIN\\n"
+        start = "          # POLICY_GATE_WAIT_BEGIN\n"
         end = "          # POLICY_GATE_WAIT_END"
         self.assertEqual(W.count(start), 1)
         self.assertEqual(W.count(end), 1)
@@ -573,7 +573,7 @@ GATE_WAIT_SECONDS=300
 """
             result = subprocess.run(
                 ["bash", "-c", stubs + shell +
-                 '\\nprintf "authorized\\n" > "$AUTHORIZED_MARKER"\\n'],
+                 '\nprintf "authorized\\n" > "$AUTHORIZED_MARKER"\n'],
                 env=env, capture_output=True, text=True, timeout=25)
             self.assertEqual(result.returncode == 0, expected_pass,
                              msg=result.stderr[-1500:])
