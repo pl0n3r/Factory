@@ -458,6 +458,20 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             with self.assertRaisesRegex(LaneError, "HEAD incorrecto"):
                 _terminal_checks_green("pl0n3r/Factory", SHA, "token")
 
+    def test_acceptance_runner_loads_consumer_gate_exactly_once(self):
+        # Reproduce el cargador aislado de scripts/aceptacion_kit.py para
+        # detectar importaciones/efectos del orden de unittest discover.
+        from scripts.aceptacion_kit import _load_test_module
+
+        loaded = _load_test_module(Path("tests/test_dependabot_lane.py"), Path.cwd())
+        suite = unittest.TestLoader().loadTestsFromName(
+            "DependabotLaneTests.test_consumer_exact_required_ci_gate", loaded
+        )
+        diagnostic = io.StringIO()
+        result = unittest.TextTestRunner(stream=diagnostic, verbosity=2).run(suite)
+        self.assertEqual(result.testsRun, 1, diagnostic.getvalue())
+        self.assertTrue(result.wasSuccessful(), diagnostic.getvalue())
+
     def test_consumer_exact_required_ci_gate(self):
         # Cada consumidor tiene su propio contexto CI obligatorio. Los
         # fixtures son independientes para que un negativo no contamine otro.
