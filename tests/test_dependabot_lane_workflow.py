@@ -225,7 +225,7 @@ request.urlopen = mocked_urlopen
         self.assertIn("github.event.action != 'closed'", classify_step)
         self.assertIn("github.event.pull_request.user.login == 'dependabot[bot]'",
                       classify_step)
-        self.assertIn("HEAD: \${{ github.event.pull_request.head.sha }}", classify_step)
+        self.assertIn("HEAD: ${{ github.event.pull_request.head.sha }}", classify_step)
         self.assertIn('dependabot_lane.py classify --repo "$REPOSITORIO" --pr "$PR" --head "$HEAD"',
                       classify_run)
         self.assertIn("echo 'approved=true' >> \"$GITHUB_OUTPUT\"", classify_run)
