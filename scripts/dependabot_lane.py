@@ -32,6 +32,18 @@ MANIFESTS = frozenset({
 })
 
 
+# Map cerrado de compuertas efectivas de los consumidores auditados.
+# Nunca se deducen gates por sufijos, alias o texto controlado por un PR.
+CANONICAL_CI_GATES = {
+    "pl0n3r/factory": ("Validar",),
+    "pl0n3r/condor": ("Validar",),
+    "pl0n3r/controlbot": ("Validar",),
+    "pl0n3r/autofactory": ("Validate / Pruebas y smoke Chrome",),
+    "pl0n3r/grindflow": ("validate",),
+    "pl0n3r/factoryrunner": ("validate", "ci / Validar"),
+}
+
+
 class LaneError(ValueError):
     """Entrada ambigua o fuera de autoridad: fail-closed."""
 
@@ -230,6 +242,13 @@ def _age_over_seven_days(pr: dict, *, now: datetime) -> bool:
 
 
 def _terminal_checks_green(repo: str, head: str, token: str) -> bool:
+    if not REPO_NAME.fullmatch(repo):
+        raise LaneError("Repositorio de consumidor inválido")
+    # Case-insensitive solo para el nombre completo del repo, nunca gates.
+    required = CANONICAL_CI_GATES.get(repo.lower())
+    if required is None:
+        # BRVTAL live, repos desconocidos y nuevos consumidores requieren contrato.
+        raise LaneError("Consumidor sin gate CI canónico autorizado")
     prefix = f"/repos/{repo}"
     pages = []
     for page in range(1, 11):
@@ -256,19 +275,26 @@ def _terminal_checks_green(repo: str, head: str, token: str) -> bool:
         if not isinstance(app, dict) or type(app.get("id")) is not int:
             raise LaneError("Check no autenticado")
         key = check["name"]
-        # El nombre "Validar" puede publicarlo otra App. La autoridad del
-        # gate solo procede de github-actions (ID canónico de politica_kit).
-        if key == "Validar" and (app.get("slug") != "github-actions" or app["id"] != 15368):
-            raise LaneError("Validar emitido por App no autorizada")
+        # Ningún check requerido puede ser sustituido por una App ajena,
+        # aunque copie literalmente el nombre del job canónico.
+        if key in required and (app.get("slug") != "github-actions" or app["id"] != 15368):
+            raise LaneError("Gate CI emitido por App no autorizada")
         # El job reconciliador mira checks de su propio HEAD mientras corre:
         # su propio check (no requerido) no puede convertirse en deadlock.
         own_checks = ("Reconciliar Dependabot", "Reconciliar Dependabot Factory",
                       "Barrer Dependabot Factory", "Barrer Dependabot consumidor")
         if key in own_checks or any(key.endswith(" / " + own) for own in own_checks):
             continue
-        if key not in latest or check["id"] > latest[key]["id"]:
+        previous = latest.get(key)
+        if (key in required and previous is not None
+            and previous["id"] == check["id"]
+            and (previous.get("status"), previous.get("conclusion"), previous.get("app"))
+                != (check.get("status"), check.get("conclusion"), check.get("app"))):
+            raise LaneError("Gate CI homónimo contradictorio")
+        if previous is None or check["id"] > previous["id"]:
             latest[key] = check
-    if "Validar" not in latest or latest["Validar"].get("conclusion") != "success":
+    if any(key not in latest or latest[key].get("status") != "completed"
+           or latest[key].get("conclusion") != "success" for key in required):
         return False
     if any(c.get("status") != "completed" or c.get("conclusion") not in ("success", "neutral", "skipped") for c in latest.values()):
         return False

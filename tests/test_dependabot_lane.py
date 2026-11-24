@@ -457,6 +457,74 @@ class DependabotLaneCoverageTests(unittest.TestCase):
             with self.assertRaisesRegex(LaneError, "HEAD incorrecto"):
                 _terminal_checks_green("pl0n3r/Factory", SHA, "token")
 
+    def test_consumer_exact_required_ci_gate(self):
+        cases = {
+            "pl0n3r/Factory": ("Validar",),
+            "pl0n3r/Condor": ("Validar",),
+            "pl0n3r/ControlBot": ("Validar",),
+            "pl0n3r/AutoFactory": ("Validate / Pruebas y smoke Chrome",),
+            "pl0n3r/GrindFlow": ("validate",),
+            "pl0n3r/FactoryRunner": ("validate", "ci / Validar"),
+        }
+        def check(name, ident, *, status="completed", conclusion="success"):
+            return {"name": name, "id": ident, "head_sha": SHA,
+                    "status": status, "conclusion": conclusion,
+                    "app": {"slug": "github-actions", "id": 15368}}
+        for repo, required in cases.items():
+            rows = [check(name, index + 1) for index, name in enumerate(required)]
+            rows.append(check("Other passing check", 10))
+            def response(_repo, _path, _token, *, method="GET", payload=None):
+                return {"total_count": len(rows), "check_runs": rows}
+            with self.subTest(repo=repo), patch(
+                "scripts.dependabot_lane.api", side_effect=response
+            ):
+                self.assertTrue(_terminal_checks_green(repo, SHA, "token"))
+                self.assertTrue(_terminal_checks_green(repo.swapcase(), SHA, "token"))
+                for required_check in required:
+                    removed = next(c for c in rows if c["name"] == required_check)
+                    rows.remove(removed)
+                    self.assertFalse(_terminal_checks_green(repo, SHA, "token"))
+                    rows.insert(0, removed)
+                    removed["conclusion"] = "skipped"
+                    self.assertFalse(_terminal_checks_green(repo, SHA, "token"))
+                    removed["conclusion"] = "success"
+                    removed["status"] = "in_progress"
+                    self.assertFalse(_terminal_checks_green(repo, SHA, "token"))
+                    removed["status"] = "completed"
+
+    def test_consumer_gate_rejects_wrong_repo_or_untrusted_check(self):
+        def check(name, ident, *, issuer=None, conclusion="success", head=SHA):
+            return {"name": name, "id": ident, "head_sha": head,
+                    "status": "completed", "conclusion": conclusion,
+                    "app": issuer or {"slug": "github-actions", "id": 15368}}
+        rows = [check("validate", 1), check("Other check", 2)]
+        def response(_repo, _path, _token, *, method="GET", payload=None):
+            return {"total_count": len(rows), "check_runs": rows}
+        with patch("scripts.dependabot_lane.api", side_effect=response):
+            for repo in ("pl0n3r/brvtal", "pl0n3r/Unknown", "other/GrindFlow"):
+                with self.subTest(repo=repo), self.assertRaisesRegex(
+                    LaneError, "sin gate"
+                ):
+                    _terminal_checks_green(repo, SHA, "token")
+            rows[0] = check("Validar", 1)
+            self.assertFalse(_terminal_checks_green("pl0n3r/GrindFlow", SHA, "token"))
+            rows[0] = check("validate", 1, issuer={"slug": "other", "id": 10})
+            with self.assertRaisesRegex(LaneError, "App no autorizada"):
+                _terminal_checks_green("pl0n3r/GrindFlow", SHA, "token")
+            rows[0] = check("validate", 1, head="b" * 40)
+            with self.assertRaisesRegex(LaneError, "HEAD incorrecto"):
+                _terminal_checks_green("pl0n3r/GrindFlow", SHA, "token")
+            rows[0] = check("validate", 1)
+            rows.append(check("validate", 1, conclusion="failure"))
+            with self.assertRaisesRegex(LaneError, "homónimo contradictorio"):
+                _terminal_checks_green("pl0n3r/GrindFlow", SHA, "token")
+            rows.pop()
+            rows[1]["conclusion"] = "failure"
+            self.assertFalse(_terminal_checks_green("pl0n3r/GrindFlow", SHA, "token"))
+            rows[1]["conclusion"] = "success"
+            rows[0]["conclusion"] = "neutral"
+            self.assertFalse(_terminal_checks_green("pl0n3r/GrindFlow", SHA, "token"))
+
     def test_check_runs_pagination_and_invalid_responses(self):
         def row(i):
             return {"id": i, "name": "Validar" if i == 0 else f"Aux {i}",
