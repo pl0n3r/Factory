@@ -112,8 +112,10 @@ class T(unittest.TestCase):
 
         self.assertEqual(maximum.get("checks"), "write")
         self.assertNotIn("actions", maximum)
-        for name in ("dependabot", "dependabot-sweep"):
-            self.assertEqual(permissions(reusable_jobs[name]).get("actions"), "write")
+        # #2222: GitHub valida TODOS los jobs del reusable al cargarlo, aunque no
+        # se ejecuten: ningún job de coordinacion.yml puede exigir actions.
+        for name, block in reusable_jobs.items():
+            self.assertNotIn("actions", permissions(block), name)
         callers = {
             name: block
             for name, block in job_blocks(TEMPLATE).items()
