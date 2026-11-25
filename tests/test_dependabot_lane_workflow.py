@@ -124,7 +124,17 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
             with self.subTest(repository=name):
                 self.assertIn("### pl0n3r/" + name, DOC)
                 self.assertIn("workflows: ['" + ci + "']", DOC)
-        self.assertEqual(DOC.count("uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"), 12)
+        # El caller allowlisted para dispatch necesita su propio reusable.
+        # Los demás ejemplos conservan el contrato histórico sin actions:write.
+        legacy = "uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"
+        privileged = "uses: pl0n3r/factory/.github/workflows/dependabot.yml@v1"
+        self.assertEqual(DOC.count(legacy), 10)
+        self.assertEqual(DOC.count(privileged), 2)
+        grindflow = DOC.split("### pl0n3r/GrindFlow", 1)[1].split(
+            "### pl0n3r/Condor", 1)[0]
+        self.assertEqual(grindflow.count(privileged), 2)
+        self.assertEqual(grindflow.count("      actions: write"), 2)
+        self.assertNotIn(legacy, grindflow)
         self.assertIn("pull-requests: write", DOC)
         self.assertIn("Factory#2107", DOC)
         brvtal = DOC.split("### pl0n3r/BRVTAL", 1)[1].split("### pl0n3r/GrindFlow", 1)[0]
