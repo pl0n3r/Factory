@@ -10,7 +10,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from scripts.salud_cola import REPOSITORIES
-from scripts.salud_cola_observar import STATE_LABELS
+from scripts.salud_cola_snapshot import STATES, SnapshotError, _state
 from scripts.salud_cola_publicar import preparar_publicacion
 from scripts.unattended_kill_switch import evaluate_unattended_kill_switch
 
@@ -66,24 +66,29 @@ def _pages(api, repo, *, state="open", only_alerts=False):
     raise AlertError("pagination_incomplete")
 
 
-def _count_issue(item, seen, counts, blockers):
-    """Clasificar exclusivamente un Issue con exactamente un estado canónico."""
+def _count_issue(item, repo, seen, counts, blockers):
+    """Proyectar un Issue al estado ES/EN puro sin cuerpo, título ni PII."""
     if type(item) is not dict:
         raise AlertError("invalid_issue")
-    if "pull_request" in item:
-        return
     number, labels = item.get("number"), item.get("labels")
     if (type(number) is not int or number <= 0 or number in seen
             or type(labels) is not list
             or any(type(x) is not dict or type(x.get("name")) is not str
                    for x in labels)):
         raise AlertError("invalid_issue")
-    statuses = [STATE_LABELS[x["name"]] for x in labels
-                if x["name"] in STATE_LABELS]
-    if len(statuses) != 1:
-        raise AlertError("unclassified_issue")
+    if "pull_request" in item:
+        # GitHub mezcla PR e Issues; excluir solo una identidad PR auténtica.
+        pr = item["pull_request"]
+        if (type(pr) is not dict or pr.get("url")
+                != f"https://api.github.com/repos/{repo}/pulls/{number}"):
+            raise AlertError("invalid_pull_request")
+        seen.add(number)
+        return
+    try:
+        status = _state([label["name"] for label in labels])
+    except SnapshotError as exc:
+        raise AlertError("unclassified_issue") from exc
     seen.add(number)
-    status = statuses[0]
     counts[status] += 1
     if status == "blocked":
         # Jamás inferir dependencias ejecutables desde texto libre.
@@ -99,14 +104,14 @@ def _inventory(api):
         if (type(meta) is not dict or meta.get("full_name") != repo
                 or meta.get("private") is not False or meta.get("archived") is True):
             raise AlertError("repository_identity_unknown")
-        counts = dict.fromkeys(STATE_LABELS.values(), 0)
+        counts = dict.fromkeys(STATES, 0)
         seen = set()
         blockers = []
         for items in _pages(api, repo):
             for item in items:
-                _count_issue(item, seen, counts, blockers)
+                _count_issue(item, repo, seen, counts, blockers)
         rows.append({"name": name, "complete": True,
-                     "open_issues": len(seen), "counts": counts,
+                     "open_issues": sum(counts.values()), "counts": counts,
                      "blockers": sorted(blockers, key=lambda x: x["number"])})
     _quota(api)  # Evitar publicar justo después de agotar el presupuesto.
     return ({"version": 1, "repositories": rows, "agent_capacity": None,
