@@ -10,6 +10,9 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 REUSABLE = (ROOT / ".github/workflows/coordinacion.yml").read_text(encoding="utf-8")
+# #2222: los jobs privilegiados viven en su propio reusable; GitHub valida los
+# permisos de todos los jobs de un reusable al cargarlo, aunque no se ejecuten.
+PRIVILEGED = (ROOT / ".github/workflows/dependabot.yml").read_text(encoding="utf-8")
 CALLER = (ROOT / ".github/workflows/dependabot-lane.yml").read_text(encoding="utf-8")
 DOC = (ROOT / "docs/dependabot-lane.md").read_text(encoding="utf-8")
 
@@ -24,13 +27,20 @@ def job(yaml, name):
 class DependabotLaneWorkflowTests(unittest.TestCase):
     def test_reusable_permissions_are_scoped(self):
         self.assertIn("permissions:\n  contents: read", REUSABLE)
+        self.assertIn("permissions:\n  contents: read", PRIVILEGED)
         for name in ("dependabot", "dependabot-sweep"):
+            self.assertIn("      contents: write", job(PRIVILEGED, name))
+            self.assertIn("      actions: write", job(PRIVILEGED, name))
+            self.assertIn("      checks: read", job(PRIVILEGED, name))
+            self.assertIn("      issues: write", job(PRIVILEGED, name))
+            self.assertIn("      pull-requests: write", job(PRIVILEGED, name))
+            # Los callers históricos de coordinacion.yml conservan su envelope.
             self.assertIn("      contents: write", job(REUSABLE, name))
-            self.assertIn("      actions: write", job(REUSABLE, name))
-            self.assertIn("      checks: read", job(REUSABLE, name))
-            self.assertIn("      issues: write", job(REUSABLE, name))
-            self.assertIn("      pull-requests: write", job(REUSABLE, name))
-        self.assertEqual(REUSABLE.count("      actions: write"), 2)
+            self.assertNotIn("actions:", job(REUSABLE, name))
+        self.assertEqual(PRIVILEGED.count("      actions: write"), 2)
+        self.assertNotIn("actions: write", job(PRIVILEGED, "validar-input"))
+        # Ningún job de coordinacion.yml puede exigir actions a sus 35 callers.
+        self.assertNotIn("      actions:", REUSABLE)
         for name in ("validar-input", "etiqueta", "validar-pr"):
             self.assertNotIn("contents: write", job(REUSABLE, name))
             self.assertNotIn("actions: write", job(REUSABLE, name))
@@ -63,7 +73,7 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
         self.assertIn("pr_number: ${{ github.event.workflow_run.pull_requests[0].number }}", lane)
         self.assertIn("head_sha: ${{ github.event.workflow_run.head_sha }}", lane)
         self.assertNotIn("checkout@", CALLER)
-        self.assertIn("uses: ./.github/workflows/coordinacion.yml", lane)
+        self.assertIn("uses: ./.github/workflows/dependabot.yml", lane)
 
     def test_sweep_cannot_run_on_pr_or_workflow_run(self):
         sweep = job(CALLER, "dependabot-sweep")
@@ -87,7 +97,8 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
         for name in ("dependabot", "dependabot-sweep"):
             self.assertIn("contents: write", job(CALLER, name))
             self.assertIn("checks: read", job(CALLER, name))
-        self.assertEqual(CALLER.count("uses: ./.github/workflows/coordinacion.yml"), 2)
+        self.assertEqual(CALLER.count("uses: ./.github/workflows/dependabot.yml"), 2)
+        self.assertNotIn("coordinacion.yml", CALLER)
 
     def test_reusable_stays_only_workflow_call_and_pinned_kit(self):
         header = REUSABLE.split("\npermissions:", 1)[0]
@@ -113,7 +124,17 @@ class DependabotLaneWorkflowTests(unittest.TestCase):
             with self.subTest(repository=name):
                 self.assertIn("### pl0n3r/" + name, DOC)
                 self.assertIn("workflows: ['" + ci + "']", DOC)
-        self.assertEqual(DOC.count("uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"), 12)
+        # El caller allowlisted para dispatch necesita su propio reusable.
+        # Los demás ejemplos conservan el contrato histórico sin actions:write.
+        legacy = "uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1"
+        privileged = "uses: pl0n3r/factory/.github/workflows/dependabot.yml@v1"
+        self.assertEqual(DOC.count(legacy), 10)
+        self.assertEqual(DOC.count(privileged), 2)
+        grindflow = DOC.split("### pl0n3r/GrindFlow", 1)[1].split(
+            "### pl0n3r/Condor", 1)[0]
+        self.assertEqual(grindflow.count(privileged), 2)
+        self.assertEqual(grindflow.count("      actions: write"), 2)
+        self.assertNotIn(legacy, grindflow)
         self.assertIn("pull-requests: write", DOC)
         self.assertIn("Factory#2107", DOC)
         brvtal = DOC.split("### pl0n3r/BRVTAL", 1)[1].split("### pl0n3r/GrindFlow", 1)[0]
