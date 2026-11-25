@@ -1,5 +1,10 @@
 # Carril protegido de Dependabot, Factory #2184
 
+
+### Reusable propio con `actions: write` (#2222)
+
+GitHub valida los permisos de **todos** los jobs de un reusable al cargarlo, aunque el caller solo ejecute uno. Por eso los jobs que despachan CI exact-main tras el squash (`actions: write`, #2212) viven en `.github/workflows/dependabot.yml`, no en `coordinacion.yml`: así los callers de coordinación (`/tomar`, etiquetas, PR, sweep) mantienen su envelope sin `actions`. Los consumidores cuyo carril ya llama `coordinacion.yml` con `operation: dependabot` siguen funcionando sin dispatch; solo un consumidor allowlisted para dispatch (hoy GrindFlow) debe llamar `pl0n3r/factory/.github/workflows/dependabot.yml@v1` y conceder `actions: write` únicamente en esos dos jobs.
+
 ## Comportamiento y límites
 
 Factory sólo activa su llamador en `main` tras CI `CI factory` concluido. El evento `workflow_run` debe ser `pull_request`, `success`, del mismo repositorio, actor Dependabot autenticado, con **un único PR** cuyo HEAD coincida exactamente con el HEAD del run. Un barrido diario (`29 10 * * *` UTC) recupera PRs cuyo payload no contenga asociación PR; el barrido no inventa un HEAD.
@@ -10,7 +15,7 @@ El llamador utiliza el reusable `coordinacion.yml` desde el árbol **protegido**
 
 ## Caller propio de Factory
 
-El archivo `.github/workflows/dependabot-lane.yml` llama `./.github/workflows/coordinacion.yml` para usar el reusable del mismo commit de `main`. El checkout del kit dentro de `dependabot` continúa anclado a `Factory@v1`, no a ramas de Dependabot. El código publicado en `v1` debe conservar la lógica de clasificación segura.
+El archivo `.github/workflows/dependabot-lane.yml` llama `./.github/workflows/dependabot.yml` para usar el reusable del mismo commit de `main`. El checkout del kit dentro de `dependabot` continúa anclado a `Factory@v1`, no a ramas de Dependabot. El código publicado en `v1` debe conservar la lógica de clasificación segura.
 
 ## YAML exacto para consumidores (copiar como `.github/workflows/dependabot-lane.yml`)
 

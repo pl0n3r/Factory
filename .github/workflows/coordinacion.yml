@@ -284,7 +284,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
-      actions: write
       checks: read
       issues: write
       pull-requests: write
@@ -316,7 +315,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write
-      actions: write
       checks: read
       issues: write
       pull-requests: write
