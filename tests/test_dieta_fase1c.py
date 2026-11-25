@@ -72,6 +72,12 @@ DEPENDABOT_LANE = WF / "dependabot-lane.yml"
 if DEPENDABOT_LANE.is_file() and not DEPENDABOT_LANE.is_symlink():
     EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"dependabot-lane.yml"})
 
+# Factory#2222: nuevo reusable Dependabot posterior a F1C, sin bajas
+# del inventario histórico ni permiso para nombres no autorizados.
+DEPENDABOT_REUSABLE = WF / "dependabot.yml"
+if DEPENDABOT_REUSABLE.is_file() and not DEPENDABOT_REUSABLE.is_symlink():
+    EXPECTED_ACTIVE = EXPECTED_ACTIVE | frozenset({"dependabot.yml"})
+
 # Factory#2182: coordinacion ajena; solo inventariar al existir el workflow.
 EPIC_CLOSURE = WF / "epic-closure.yml"
 if EPIC_CLOSURE.is_file() and not EPIC_CLOSURE.is_symlink():

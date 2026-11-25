@@ -62,6 +62,14 @@ if DEPENDABOT_LANE_FILE.is_file() and not DEPENDABOT_LANE_FILE.is_symlink():
         "workflow_run", "schedule"
     })
 
+# Factory#2222: reusable Dependabot separado del coordinador. Adición posterior
+# al ledger histórico, registrada solo al existir el archivo real, sin
+# admitir workflows desconocidos ni cambiar los recuentos históricos.
+DEPENDABOT_REUSABLE_WORKFLOW = ".github/workflows/dependabot.yml"
+DEPENDABOT_REUSABLE_FILE = ROOT / DEPENDABOT_REUSABLE_WORKFLOW
+if DEPENDABOT_REUSABLE_FILE.is_file() and not DEPENDABOT_REUSABLE_FILE.is_symlink():
+    POST_BASELINE_WORKFLOWS[DEPENDABOT_REUSABLE_WORKFLOW] = frozenset({"workflow_call"})
+
 # Factory#2182: caller de cierre de epicas autorizado por otra V3; solo se
 # reconoce cuando exista en el arbol, con triggers exactos.
 EPIC_CLOSURE_WORKFLOW = ".github/workflows/epic-closure.yml"
