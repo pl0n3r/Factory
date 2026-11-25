@@ -7274,5 +7274,109 @@ class GranularReserveWorkIntegrationTests(unittest.TestCase):
 
 
 
+
+class OrphanAdoptionENTests(unittest.TestCase):
+    def setUp(self):
+        coordinator.configure_profile("en")
+        self.addCleanup(coordinator.configure_profile, "es")
+        self.api = FakeGitHub()
+        self.api.repo = "pl0n3r/brvtal"
+        self.api.issue_data["labels"] = [{"name": coordinator.STATUS_AVAILABLE}]
+        self.branch = "work/issue-12"
+        self.head = "a" * 40
+        self.base = "b" * 40
+        self.api.branches.update({self.branch: self.head, "main": self.base})
+        self.api.issue_data["body"] = self.body(12, ["src/a.php"], [20])
+        self.api.related_issues[20] = {"number": 20, "state": "closed", "state_reason": "completed", "labels": []}
+        self.original_body = "Closes #12\n<!-- brvtal-reservation-id:  -->"
+        self.api.pulls[15] = {
+            "number": 15, "state": "open", "body": self.original_body,
+            "head": {"ref": self.branch, "sha": self.head, "repo": {"full_name": self.api.repo}},
+            "base": {"ref": "main", "sha": self.base},
+        }
+        self.api.pull_files_map[15] = {"src/a.php"}
+        self.proof = {"complete": True, "head_sha": self.head, "base_sha": self.base, "files": ["src/a.php"]}
+        self.api.pull_files_exact_head = lambda number: dict(self.proof)
+
+    def body(self, number, paths, deps):
+        marker = {"version": 1, "epic": 9, "task_key": f"LEAF_{number}",
+                  "order": number, "owner": "pl0n3r", "roles": ["qa"],
+                  "depends_on": deps, "paths": paths}
+        return (VALID_ACCEPTANCE_BODY + "\n### Rutas reclamadas\n"
+                + "\n".join("- " + p for p in paths)
+                + "\n<!-- factory-plan-task " + json.dumps(marker) + " -->")
+
+    def adopt(self):
+        coordinator.process_comment(self.api, 12, "pl0n3r", "OWNER", "/adopt-orphan-contract")
+
+    def assert_untouched(self):
+        self.assertIsNone(coordinator.active_reservation(self.api, 12))
+        self.assertEqual(self.api.pulls[15]["body"], self.original_body)
+        self.assertEqual(self.api.branches[self.branch], self.head)
+        self.assertEqual(self.api.status_history, [])
+
+    def test_en_adoption_pins_v3_and_preserves_pr(self):
+        self.adopt()
+        lease = coordinator.active_reservation(self.api, 12)
+        self.assertEqual(lease["version"], 3)
+        self.assertEqual(lease["task_paths"], ["src/a.php"])
+        self.assertEqual(lease["task_depends_on"], [20])
+        self.assertEqual(lease["acceptance_sha256"], contract_fingerprint(self.api.issue_data["body"]))
+        self.assertEqual(coordinator.reservation_from_pr_body(self.api.pulls[15]["body"]), lease["reservation_id"])
+        self.assertEqual(self.api.pulls[15]["body"].count("<!-- brvtal-reservation-id:"), 1)
+        self.assertEqual(self.api.branches[self.branch], self.head)
+        coordinator.validate_pull(self.api, 15, True)
+        coordinator.validate_pr_claims(self.api, 15)
+
+    def test_en_command_exact_and_profile_isolated(self):
+        self.assertEqual(coordinator.parse_comment_command("/adopt-orphan-contract"), ("adoptar-contrato-huerfana", None))
+        for bad in ("/adoptar-contrato-huerfana", "/adopt-orphan-contract ", "/adopt-orphan-contract extra"):
+            with self.subTest(bad=bad), self.assertRaises(CoordinationError):
+                coordinator.parse_comment_command(bad)
+        coordinator.configure_profile("es")
+        with self.assertRaises(CoordinationError):
+            coordinator.parse_comment_command("/adopt-orphan-contract")
+
+    def test_en_blocks_dependency_and_out_of_claim_diff(self):
+        self.api.related_issues[20]["state"] = "open"
+        with self.assertRaisesRegex(CoordinationError, "dependencias no completadas"):
+            self.adopt()
+        self.assert_untouched()
+        self.api.related_issues[20]["state"] = "closed"
+        self.proof["files"] = ["src/other.php"]
+        with self.assertRaisesRegex(CoordinationError, "fuera de claims"):
+            self.adopt()
+        self.assert_untouched()
+        self.proof.update({"files": ["src/a.php"], "complete": False})
+        with self.assertRaisesRegex(CoordinationError, "incompleto"):
+            self.adopt()
+        self.assert_untouched()
+
+    def test_en_blocks_hidden_active_claim(self):
+        other = {"number": 22, "state": "open", "labels": [{"name": coordinator.STATUS_AVAILABLE}],
+                 "body": self.body(22, ["src/a.php"], [])}
+        self.api.open_issue_data.append(other)
+        marker = coordinator.parse_task_marker(other["body"])
+        lease = coordinator.reservation_marker(
+            "pl0n3r", SESSION_A, "work/issue-22", True, "tomar",
+            contract_fingerprint(other["body"]), marker,
+        )
+        original = self.api.issue_comments
+        self.api.issue_comments = lambda n: (
+            [{"body": lease, "user": {"login": BOT}}] if n == 22 else original(n)
+        )
+        with self.assertRaisesRegex(CoordinationError, "colisión"):
+            self.adopt()
+        self.assert_untouched()
+
+    def test_en_blocks_unauthorized_and_blocked(self):
+        with self.assertRaises(CoordinationError):
+            coordinator.process_comment(self.api, 12, "other", "NONE", "/adopt-orphan-contract")
+        self.assert_untouched()
+        self.api.issue_data["labels"] = [{"name": coordinator.STATUS_BLOCKED}]
+        with self.assertRaises(CoordinationError):
+            self.adopt()
+        self.assert_untouched()
+
 if __name__ == "__main__":
     unittest.main()
