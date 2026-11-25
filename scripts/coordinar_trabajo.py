@@ -4675,7 +4675,9 @@ def adopt_orphaned_contract(
             api, issue_number, actor, refreshed, api.open_issues(),
             fingerprint, initial_state,
         )
-        if task_marker is not None:
+        # EN es el nuevo contrato estricto; ES conserva su compatibilidad
+        # de recuperación hasta migrar sus fixtures y consumidores.
+        if PROFILE.name == "en" and task_marker is not None:
             if not open_pulls and api.branch_sha("main") != branch_sha:
                 raise CoordinationError("Rama V3 con cambios sin PR verificable.")
             for pull in open_pulls:
