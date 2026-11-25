@@ -295,6 +295,81 @@ class SaludColaAlertarTests(unittest.TestCase):
                 with self.assertRaises(AlertError):
                     api.request(method, path, payload)
 
+    def test_mixed_canonical_status_labels(self):
+        """AC-01: BRVTAL EN real y ES comparten un único normalizador."""
+        api = FakeAPI()
+        brvtal = "pl0n3r/brvtal"
+        api.repos[brvtal] = [
+            {"number": 51, "labels": [{"name": "status: blocked"}],
+             "body": "correo privado: test@example.com"},
+            {"number": 52, "labels": [{"name": "status: recovery required"}]},
+            {"number": 53, "labels": [{"name": "status: available"}]},
+            {"number": 54, "labels": [{"name": "estado: en revisión"}]},
+            {"number": 55, "labels": [{"name": "estado: planificado"}]},
+            {"number": 56, "labels": [], "pull_request": {
+                "url": "https://api.github.com/repos/pl0n3r/brvtal/pulls/56"}},
+        ]
+        inventory, _ = alert._inventory(api)
+        row = next(r for r in inventory["repositories"] if r["name"] == "brvtal")
+        self.assertEqual(row["open_issues"], 5)
+        self.assertEqual(row["counts"], {
+            "available": 1, "reserved": 0, "blocked": 1, "planned": 1,
+            "in_review": 1, "recovery_required": 1,
+        })
+        self.assertEqual(row["blockers"], [
+            {"number": 51, "cause": "unknown", "roadmap": False},
+        ])
+        result = ejecutar(api, enabled=True)
+        self.assertEqual(result["status"], "SKIPPED")
+        self.assertFalse(api.writes)
+        api.repos[brvtal] = [
+            row for row in api.repos[brvtal] if row["number"] != 53
+        ]
+        self.assertEqual(ejecutar(api, enabled=True)["status"], "CREATED")
+        self.assertEqual(len(api.writes), 1)
+        self.assertNotIn("test@example.com", json.dumps(api.writes))
+
+    def test_ambiguous_status_rejects_global_inventory(self):
+        """AC-02: conflictos, terminales, typos y PR falsos no publican."""
+        for names in (
+            ["status: available", "estado: bloqueado"],
+            ["status: blocked", "estado: bloqueado"],
+            ["status: available", "status: available"],
+            ["status: blocked", "STATUS: unknown"],
+            ["estado: bloqueado", "Estado: bloqueado"],
+            ["status: completed"],
+            ["estado: completado"],
+            ["status: typo", "estado: bloqueado"],
+            [],
+        ):
+            with self.subTest(names=names):
+                api = FakeAPI()
+                api.repos["pl0n3r/brvtal"] = [{
+                    "number": 88, "labels": [{"name": n} for n in names],
+                }]
+                self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+                self.assertFalse(api.writes)
+        for pr in (
+            "false", None, {},
+            {"url": "https://api.github.com/repos/pl0n3r/Condor/pulls/88"},
+            {"url": "https://api.github.com/repos/pl0n3r/brvtal/pulls/87"},
+        ):
+            with self.subTest(pr=pr):
+                api = FakeAPI()
+                api.repos["pl0n3r/brvtal"] = [{
+                    "number": 88, "labels": [], "pull_request": pr,
+                }]
+                self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+                self.assertFalse(api.writes)
+        api = FakeAPI()
+        api.repos["pl0n3r/brvtal"] = [
+            {"number": 89, "labels": [], "pull_request": {
+                "url": "https://api.github.com/repos/pl0n3r/brvtal/pulls/89"}},
+            {"number": 89, "labels": [{"name": "status: blocked"}]},
+        ]
+        self.assertEqual(ejecutar(api, enabled=True)["status"], "SKIPPED")
+        self.assertFalse(api.writes)
+
     def test_inventory_and_pagination_reject_malformed_sources(self):
         api = FakeAPI()
         self.assertEqual(alert._quota(api)["remaining"], 4500)
