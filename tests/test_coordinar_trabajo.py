@@ -7378,5 +7378,50 @@ class OrphanAdoptionENTests(unittest.TestCase):
             self.adopt()
         self.assert_untouched()
 
+    def test_en_blocks_closed_issue_before_lock(self):
+        self.api.issue_data["state"] = "closed"
+        with self.assertRaisesRegex(CoordinationError, "no está abierto"):
+            self.adopt()
+        self.assert_untouched()
+
+    def test_en_blocks_existing_active_lease_without_rewriting_pr(self):
+        original_comments = self.api.issue_comments
+        task = coordinator.parse_task_marker(self.api.issue_data["body"])
+        pinned = coordinator.reservation_marker(
+            "pl0n3r", SESSION_A, self.branch, True, "tomar",
+            contract_fingerprint(self.api.issue_data["body"]), task,
+        )
+        self.api.issue_comments = lambda number: (
+            [{"body": pinned, "user": {"login": BOT}}]
+            if number == 12 else original_comments(number)
+        )
+        with self.assertRaisesRegex(CoordinationError, "reserva activa"):
+            self.adopt()
+        self.assertEqual(self.api.pulls[15]["body"], self.original_body)
+        self.assertEqual(self.api.branches[self.branch], self.head)
+        self.assertEqual(self.api.status_history, [])
+
+    def test_en_blocks_pr_base_drift_during_cas_lock(self):
+        original_acquire = self.api.acquire_issue_lock
+
+        def change_base_before_lock_returns(issue_number, branch_sha):
+            token = original_acquire(issue_number, branch_sha)
+            if token is not None:
+                self.api.pulls[15]["base"]["sha"] = "c" * 40
+            return token
+
+        with patch.object(self.api, "acquire_issue_lock",
+                          side_effect=change_base_before_lock_returns):
+            with self.assertRaisesRegex(CoordinationError, "cambió durante adopción"):
+                self.adopt()
+        self.assert_untouched()
+
+    def test_en_blocks_pr_head_drift_in_exact_diff(self):
+        self.proof["head_sha"] = "c" * 40
+        with self.assertRaisesRegex(CoordinationError, "incompleto o caducado"):
+            self.adopt()
+        self.assert_untouched()
+
+
 if __name__ == "__main__":
     unittest.main()
