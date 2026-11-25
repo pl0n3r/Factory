@@ -28,7 +28,7 @@ class F1583Candidato1044Tests(unittest.TestCase):
         # Condor quedó parado con 76 Issues abiertos bajo el tope de 64 (#1583, PR #1584).
         from scripts.coordinar_trabajo import MAX_OPEN_ISSUES_V3
 
-        self.assertGreaterEqual(MAX_OPEN_ISSUES_V3, 100)
+        self.assertGreaterEqual(MAX_OPEN_ISSUES_V3, 250)
 
     def test_falla_cerrado(self) -> None:
         from scripts.politica_kit import PolicyError, _latest_checks_by_name
