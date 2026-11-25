@@ -2204,7 +2204,7 @@ def orphan_adoption_pull_snapshot(
         seen.add(number)
         records.append((
             number, pull["state"], pull.get("body"), head.get("ref"),
-            head.get("sha"), source["full_name"], base.get("ref"),
+            head.get("sha"), source["full_name"], base.get("ref"), base.get("sha"),
         ))
     return tuple(sorted(records, key=lambda record: record[0]))
 
@@ -2426,8 +2426,11 @@ def rewrite_pull_reservation(body: str, reservation_id: str) -> str:
     else:
         value = value.rstrip() + f"\n\n{visible}"
 
+    empty_marker = re.compile(rf"<!--\s*{re.escape(PROFILE.hidden_marker)}:\s*-->")
     if RESERVATION_HIDDEN_RE.search(value):
         value = RESERVATION_HIDDEN_RE.sub(hidden, value)
+    elif empty_marker.search(value):
+        value = empty_marker.sub(hidden, value)
     else:
         value = value.rstrip() + f"\n\n{hidden}"
 
@@ -2479,7 +2482,7 @@ def recover_stale_work(
     if previous is None:
         raise CoordinationError(
             "Rama huérfana sin reserva activa: ejecuta "
-            "/adoptar-contrato-huerfana para fijar el contrato antes de recuperar."
+            f"{orphan_adoption_command()} para fijar el contrato antes de recuperar."
         )
     acceptance_sha256 = reservation_fingerprint_for_profile(
         api, issue_number, previous, "recuperar"
@@ -3779,6 +3782,34 @@ def reserve_work(
         )
         return None
 
+    task_marker, parallel_evidence, recheck_before_publishing = (
+        prepare_reservation_arbitration(
+            api, issue_number, actor, issue, open_issues,
+            acceptance_sha256, STATUS_AVAILABLE,
+        )
+    )
+    # La entrada /tomar también falla cerrada en los fakes de integración;
+    # el adaptador REST real revalida el switch en cada write posterior.
+    require_global_running(api)
+    return reserve_available_work(
+        api,
+        issue_number,
+        actor,
+        branch,
+        acceptance_sha256,
+        parallel_evidence,
+        task_marker,
+        pre_publish_check=recheck_before_publishing,
+    )
+
+def prepare_reservation_arbitration(
+    api: GitHub, issue_number: int, actor: str, issue: dict[str, Any],
+    open_issues: list[dict[str, Any]], acceptance_sha256: str,
+    expected_status: str,
+) -> tuple[dict[str, Any] | None, list[str], Callable[[], None]]:
+    """Preflight compartido para toda concesión nueva de autoridad."""
+    if len(open_issues) > MAX_OPEN_ISSUES_V3:
+        raise CoordinationError("Inventario V3 supera el presupuesto seguro.")
     try:
         task_marker = parse_task_marker(str(issue.get("body") or ""))
         dependency_states = (
@@ -3880,7 +3911,7 @@ def reserve_work(
             or {
                 label for label in label_names(latest_issue)
                 if label.startswith(("estado: ", "status: "))
-            } != {STATUS_AVAILABLE}
+            } != {expected_status}
             or parse_task_marker(str(latest_issue.get("body") or ""))
             != task_marker
             or contract_fingerprint(str(latest_issue.get("body") or ""))
@@ -3952,19 +3983,8 @@ def reserve_work(
         if renewed != verified or renewed_pins != pins:
             raise CoordinationError("Diff/HEAD activo cambió durante /tomar.")
 
-    # La entrada /tomar también falla cerrada en los fakes de integración;
-    # el adaptador REST real revalida el switch en cada write posterior.
-    require_global_running(api)
-    return reserve_available_work(
-        api,
-        issue_number,
-        actor,
-        branch,
-        acceptance_sha256,
-        parallel_evidence,
-        task_marker,
-        pre_publish_check=recheck_before_publishing,
-    )
+    return task_marker, parallel_evidence, recheck_before_publishing
+
 
 def reservation_fingerprint_for_profile(
     api: GitHub,
@@ -4526,6 +4546,42 @@ def migrate_legacy_reservation(
     return reservation_id.lower()
 
 
+def verify_orphan_claims(
+    api: GitHub, pull: dict[str, Any], branch_sha: str, paths: list[str],
+) -> None:
+    """Comprueba el diff huérfano antes de conceder autoridad V3."""
+    head, base = pull["head"], pull["base"]
+    base_sha = base.get("sha")
+    if (
+        head.get("sha") != branch_sha
+        or not SHA_RE.fullmatch(branch_sha)
+        or base.get("ref") != "main"
+        or not isinstance(base_sha, str)
+        or not SHA_RE.fullmatch(base_sha)
+    ):
+        raise CoordinationError("PR huérfano sin HEAD/BASE verificable.")
+    reader = getattr(api, "pull_files_exact_head", None)
+    if not callable(reader):
+        raise CoordinationError("Diff huérfano exact-HEAD no disponible.")
+    proof = reader(pull["number"])
+    if (
+        not isinstance(proof, dict)
+        or proof.get("complete") is not True
+        or proof.get("head_sha") != branch_sha.lower()
+        or proof.get("base_sha") != base_sha.lower()
+        or not isinstance(proof.get("files"), list)
+        or not proof["files"]
+        or not all(isinstance(path, str) for path in proof["files"])
+    ):
+        raise CoordinationError("Diff huérfano incompleto o caducado.")
+    exempt = shared_version_exempt_files(proof)
+    if any(
+        path not in exempt and not any(claims_overlap(path, claim) for claim in paths)
+        for path in proof["files"]
+    ):
+        raise CoordinationError("Diff huérfano fuera de claims V3.")
+
+
 def adopt_orphaned_contract(
     api: GitHub,
     issue_number: int,
@@ -4572,6 +4628,8 @@ def adopt_orphaned_contract(
     body_at_start = str(issue.get("body") or "")
     fingerprint = contract_fingerprint(body_at_start)
     task_marker = parse_task_marker(body_at_start)
+    if PROFILE.name == "en" and task_marker is None:
+        raise CoordinationError("La adopción EN requiere un contrato V3 planificado.")
     open_pulls = open_pull_records_for_branch(api, branch)
     initial_pull_snapshot = orphan_adoption_pull_snapshot(open_pulls)
     # No conservar referencias mutables del transporte como comparadores:
@@ -4613,6 +4671,24 @@ def adopt_orphaned_contract(
                 f"Issue #{issue_number} ya tiene una reserva activa; no es huérfano."
             )
 
+        task_marker, _, recheck = prepare_reservation_arbitration(
+            api, issue_number, actor, refreshed, api.open_issues(),
+            fingerprint, initial_state,
+        )
+        # EN es el nuevo contrato estricto; ES conserva su compatibilidad
+        # de recuperación hasta migrar sus fixtures y consumidores.
+        if PROFILE.name == "en" and task_marker is not None:
+            if not open_pulls and api.branch_sha("main") != branch_sha:
+                raise CoordinationError("Rama V3 con cambios sin PR verificable.")
+            for pull in open_pulls:
+                verify_orphan_claims(api, pull, branch_sha, task_marker["paths"])
+        recheck()
+        if (active_reservation(api, issue_number) is not None
+                or api.branch_sha(branch) != branch_sha
+                or orphan_adoption_pull_snapshot(
+                    open_pull_records_for_branch(api, branch)
+                ) != initial_pull_snapshot):
+            raise CoordinationError("Autoridad o PR cambió antes de adoptar.")
         guarded = _RecoveryGuardedGitHub(api, issue_number, branch_sha, token)
         reservation_id = new_reservation_id()
         publish_reservation(
@@ -4687,8 +4763,13 @@ def adopt_orphaned_contract(
         )
         return reservation_id
     finally:
-        # Solo su token CAS propio; jamás borrar el lock del siguiente actor.
-        api.release_issue_lock(issue_number, token)
+        # Solo limpieza CAS del token propio; #767 puede pasar a PAUSED
+        # durante el preflight, pero jamás se borra el lock sucesor.
+        cleanup = getattr(api, "release_owned_issue_lock_after_pause", None)
+        if callable(cleanup):
+            cleanup(issue_number, token)
+        else:
+            api.release_issue_lock(issue_number, token)
 
 
 def release_permission(
@@ -5998,6 +6079,11 @@ def recover_live_owner_v3_orphaned_issue_lock(
     return evidence
 
 
+def orphan_adoption_command() -> str:
+    return ("/adoptar-contrato-huerfana" if PROFILE.name == "es"
+            else "/adopt-orphan-contract")
+
+
 def parse_comment_command(body: str) -> tuple[str, str | None]:
     """Interpreta únicamente los comandos públicos del perfil activo."""
     value = body.strip()
@@ -6019,7 +6105,7 @@ def parse_comment_command(body: str) -> tuple[str, str | None]:
                 or SESSION_RE.fullmatch(items[2]) is None):
             raise CoordinationError("Recuperación V3 activa requiere SHA y UUID exactos.")
         return "recuperar-lock-v3-activa", items[1] + " " + items[2]
-    if PROFILE.name == "es" and value == "/adoptar-contrato-huerfana":
+    if (value if PROFILE.name == "es" else body) == orphan_adoption_command():
         return "adoptar-contrato-huerfana", None
     pairs = [(PROFILE.release, "liberar"), (PROFILE.transfer, "transferir")]
     if PROFILE.recover:
