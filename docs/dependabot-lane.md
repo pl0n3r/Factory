@@ -9,7 +9,7 @@ GitHub valida los permisos de **todos** los jobs de un reusable al cargarlo, aun
 
 Factory sólo activa su llamador en `main` tras CI `CI factory` concluido. El evento `workflow_run` debe ser `pull_request`, `success`, del mismo repositorio, actor Dependabot autenticado, con **un único PR** cuyo HEAD coincida exactamente con el HEAD del run. Un barrido diario (`29 10 * * *` UTC) recupera PRs cuyo payload no contenga asociación PR; el barrido no inventa un HEAD.
 
-El llamador utiliza el reusable `coordinacion.yml` desde el árbol **protegido**, nunca checkout del código del PR con token privilegiado. La operación `dependabot` valida nuevamente identidad, firma, diff, semver, repo, HEAD, estado del interruptor global #767, ausencia de carreras y checks terminales, incluido `Validar` emitido por GitHub Actions. El permiso `contents: write` se limita a los jobs `dependabot` y `dependabot-sweep` del reusable y de cada caller; los demás jobs conservan sus permisos. No se usa `--admin` ni se modifica la protección de ramas.
+El llamador utiliza el reusable `dependabot.yml` desde el árbol **protegido**, nunca checkout del código del PR con token privilegiado. La operación `dependabot` valida nuevamente identidad, firma, diff, semver, repo, HEAD, estado del interruptor global #767, ausencia de carreras y checks terminales, incluido `Validar` emitido por GitHub Actions. El permiso `contents: write` se limita a los jobs `dependabot` y `dependabot-sweep` del reusable y de cada caller; los demás jobs conservan sus permisos. No se usa `--admin` ni se modifica la protección de ramas.
 
 **Política de merge actual (Factory#2172):** patch/minor de manifiestos o lockfiles, con checks exigidos realmente en verde, se fusiona por `PUT /merge` **squash exact-SHA** usando las protecciones normales de GitHub. No se limita a encender una preferencia de auto-merge diferida. Versiones **major**, cambios a pins de workflows, código de aplicación o PRs estancados siguen el proceso manual con issue de seguimiento idempotente; el workflow no los fusiona. Un run success aislado nunca basta. Las fases `live` deben respetar adicionalmente sus puertas de no auto-merge.
 
@@ -102,10 +102,11 @@ jobs:
       github.event.workflow_run.pull_requests[0].head.sha == github.event.workflow_run.head_sha
     permissions:
       contents: write
+      actions: write
       checks: read
       issues: write
       pull-requests: write
-    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1
+    uses: pl0n3r/factory/.github/workflows/dependabot.yml@v1
     with:
       operation: dependabot
       pr_number: ${{ github.event.workflow_run.pull_requests[0].number }}
@@ -114,10 +115,11 @@ jobs:
     if: github.event_name == 'schedule' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
+      actions: write
       checks: read
       issues: write
       pull-requests: write
-    uses: pl0n3r/factory/.github/workflows/coordinacion.yml@v1
+    uses: pl0n3r/factory/.github/workflows/dependabot.yml@v1
     with:
       operation: dependabot-sweep
 ```
