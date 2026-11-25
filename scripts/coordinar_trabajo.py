@@ -4763,8 +4763,13 @@ def adopt_orphaned_contract(
         )
         return reservation_id
     finally:
-        # Solo su token CAS propio; jamás borrar el lock del siguiente actor.
-        api.release_issue_lock(issue_number, token)
+        # Solo limpieza CAS del token propio; #767 puede pasar a PAUSED
+        # durante el preflight, pero jamás se borra el lock sucesor.
+        cleanup = getattr(api, "release_owned_issue_lock_after_pause", None)
+        if callable(cleanup):
+            cleanup(issue_number, token)
+        else:
+            api.release_issue_lock(issue_number, token)
 
 
 def release_permission(
