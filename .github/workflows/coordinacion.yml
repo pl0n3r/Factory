@@ -90,7 +90,7 @@ jobs:
     if: inputs.operation == 'comment'
     needs: validar-input
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: write
       issues: write
@@ -120,7 +120,7 @@ jobs:
     if: inputs.operation == 'label'
     needs: validar-input
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: write
@@ -148,7 +148,7 @@ jobs:
     if: inputs.operation == 'pr'
     needs: validar-input
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: write
       issues: write
@@ -203,7 +203,7 @@ jobs:
     if: inputs.operation == 'issue'
     needs: validar-input
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: write
       issues: write
@@ -233,7 +233,7 @@ jobs:
       )
     needs: validar-input
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
       issues: read
@@ -338,7 +338,7 @@ jobs:
     if: inputs.operation == 'sweep'
     needs: validar-input
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: write
       issues: write
