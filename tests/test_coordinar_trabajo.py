@@ -7422,6 +7422,50 @@ class OrphanAdoptionENTests(unittest.TestCase):
             self.adopt()
         self.assert_untouched()
 
+    def test_en_pause_during_diff_releases_owned_lock_only(self):
+        """PAUSED deniega el grant, pero no deja el lock propio huérfano."""
+        original_release = self.api.release_issue_lock
+        cleaned = []
+
+        def release_owned_after_pause(issue_number, token):
+            cleaned.append((issue_number, token))
+            original_release(issue_number, token)
+
+        def reject_regular_release(*_args):
+            raise CoordinationError("Kill switch #767: PAUSED; regular release denied")
+
+        self.api.release_owned_issue_lock_after_pause = release_owned_after_pause
+        with patch.object(self.api, "release_issue_lock",
+                          side_effect=reject_regular_release), (
+            patch.object(coordinator, "verify_orphan_claims",
+                         side_effect=CoordinationError("Kill switch #767: PAUSED"))
+        ):
+            with self.assertRaisesRegex(CoordinationError, "PAUSED"):
+                self.adopt()
+        self.assertEqual(len(cleaned), 1)
+        self.assertEqual(cleaned[0][0], 12)
+        self.assertNotIn(coordinator.recovery_lock_branch(12), self.api.branches)
+        self.assert_untouched()
+
+    def test_en_pause_cleanup_never_releases_successor_lock(self):
+        """El CAS de cleanup no puede borrar un token que otro actor cambió."""
+        original_release = self.api.release_issue_lock
+        successor = "lock-generation-new-owner"
+
+        def replace_lock_before_diff(*_args):
+            self.api.branches[coordinator.recovery_lock_branch(12)] = successor
+            raise CoordinationError("Kill switch #767: PAUSED")
+
+        self.api.release_owned_issue_lock_after_pause = original_release
+        with patch.object(coordinator, "verify_orphan_claims",
+                          side_effect=replace_lock_before_diff):
+            with self.assertRaisesRegex(CoordinationError, "lock ajeno"):
+                self.adopt()
+        self.assertEqual(
+            self.api.branch_sha(coordinator.recovery_lock_branch(12)), successor
+        )
+        self.assert_untouched()
+
 
 if __name__ == "__main__":
     unittest.main()
