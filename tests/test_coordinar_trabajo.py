@@ -1570,7 +1570,7 @@ class CoordinacionTests(unittest.TestCase):
                 self.assertEqual(api.assignees, set())
 
     def test_v3_inventory_read_budget_is_bounded_and_fails_closed(self):
-        """10 Issues se verifican, 100 no gastan API ni conceden sesión."""
+        """10 Issues se verifican; superar el tope deniega sin leer leases."""
         small, trusted = self._hidden_v3_fixture(STATUS_BLOCKED)
         for num in range(60, 69):
             small.open_issue_data.append({
@@ -1593,7 +1593,7 @@ class CoordinacionTests(unittest.TestCase):
         self.assertEqual(small.comments, [])
 
         large, trusted_large = self._hidden_v3_fixture(STATUS_AVAILABLE)
-        for num in range(60, 159):
+        for num in range(60, 59 + coordinator.MAX_OPEN_ISSUES_V3):
             large.open_issue_data.append({
                 "number": num, "state": "open",
                 "labels": [{"name": STATUS_AVAILABLE}],
@@ -1605,7 +1605,7 @@ class CoordinacionTests(unittest.TestCase):
             return trusted_large(number)
         with patch.object(large, "issue_comments", side_effect=counted_comments):
             with self.assertRaisesRegex(
-                CoordinationError, r"presupuesto seguro de 100 Issues"
+                CoordinationError, rf"presupuesto seguro de {coordinator.MAX_OPEN_ISSUES_V3} Issues"
             ):
                 reserve_work(large, 12, "pl0n3r", "OWNER")
         # El presupuesto se comprueba antes de leer cualquier lease,
@@ -6296,7 +6296,7 @@ class V3ClaimScopePRTests(unittest.TestCase):
 
 
 class TestIssueInventoryBudget(unittest.TestCase):
-    """Factory #1583: inventario completo de 76-100 Issues sin salto de leases."""
+    """Factory #2230: inventario completo hasta 250 Issues sin saltar leases."""
 
     @staticmethod
     def _issues(api, count):
@@ -6316,6 +6316,15 @@ class TestIssueInventoryBudget(unittest.TestCase):
         self.assertTrue(active_reservation(api, 12)["active"])
         self.assertIn("trabajo/issue-12", api.branches)
 
+    def test_127_open_issues_allowed(self):
+        """brvtal con 127 Issues abiertos puede obtener V3 sin omitir leases."""
+        api = FakeGitHub()
+        self._issues(api, 127)
+        self.assertEqual(127, len(api.open_issues()))
+        self.assertIsNotNone(reserve_work(api, 12, "pl0n3r", "OWNER"))
+        self.assertTrue(active_reservation(api, 12)["active"])
+        self.assertIn("trabajo/issue-12", api.branches)
+
     def test_limit_plus_one_denied(self):
         api = FakeGitHub()
         self._issues(api, coordinator.MAX_OPEN_ISSUES_V3 + 1)
@@ -6327,7 +6336,7 @@ class TestIssueInventoryBudget(unittest.TestCase):
             return original(number)
 
         with patch.object(api, "issue_comments", side_effect=measured):
-            with self.assertRaisesRegex(CoordinationError, "presupuesto seguro de 100 Issues"):
+            with self.assertRaisesRegex(CoordinationError, rf"presupuesto seguro de {coordinator.MAX_OPEN_ISSUES_V3} Issues"):
                 reserve_work(api, 12, "pl0n3r", "OWNER")
         self.assertEqual([], comment_reads)
         self.assertNotIn("trabajo/issue-12", api.branches)
@@ -6348,7 +6357,7 @@ class TestIssueInventoryBudget(unittest.TestCase):
         self.assertEqual([], api.comments)
 
     def test_budget_used_consistently(self):
-        # Conceder 76 en la lectura inicial no sirve si la SEGUNDA ya ve 101.
+        # Conceder 76 en la primera lectura no sirve si la segunda supera el tope.
         api = FakeGitHub()
         self._issues(api, 76)
         create = api.create_branch
@@ -6360,12 +6369,12 @@ class TestIssueInventoryBudget(unittest.TestCase):
                     {"number": number, "state": "open",
                      "labels": [{"name": STATUS_AVAILABLE}],
                      "body": VALID_ACCEPTANCE_BODY}
-                    for number in range(175, 200)
+                    for number in range(175, 175 + coordinator.MAX_OPEN_ISSUES_V3 - 75)
                 )
             return result
 
         with patch.object(api, "create_branch", side_effect=mutate_after_branch):
-            with self.assertRaisesRegex(CoordinationError, "presupuesto seguro de 100 Issues"):
+            with self.assertRaisesRegex(CoordinationError, rf"presupuesto seguro de {coordinator.MAX_OPEN_ISSUES_V3} Issues"):
                 reserve_work(api, 12, "pl0n3r", "OWNER")
         self.assertNotIn("trabajo/issue-12", api.branches)
         self.assertEqual([], api.comments)
