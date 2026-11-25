@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "sonar.yml"
-PINNED_SCANNER_SHA = "d209202bc7d53ff1cc128f7f907dac145c9d6ae9"
+PINNED_SCANNER_SHA = "59202af334b4ba7b5db01b701b8e79f8b3bef0f4"
 PROJECT_KEY = "pl0n3r_factory"
 
 
