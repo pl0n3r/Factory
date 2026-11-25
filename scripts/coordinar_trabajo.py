@@ -69,7 +69,7 @@ except ValueError:
 
 COMMIT_CLOCK_SKEW_SECONDS = 300
 # Upper bound for full, fail-closed V3 inventories (all active claims checked).
-MAX_OPEN_ISSUES_V3 = 100
+MAX_OPEN_ISSUES_V3 = 250
 
 ALLOWED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 PUBLIC_WORKFLOW_RUN_REPOS = frozenset(
