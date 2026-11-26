@@ -37,6 +37,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: python3 scripts/salud_cola_observar.py | python3 -m scripts.salud_cola_publicar
+      - name: Censo global autenticado GET-only
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 -m scripts.salud_cola_global_observar
 
   publicar:
     name: Publicar solo aviso Factory (OWNER #1532/A)
