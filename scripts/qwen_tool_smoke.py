@@ -190,7 +190,7 @@ def run_real(endpoint, model, max_seconds=90):
         after = (project / "module.py").read_text(encoding="utf8") if (project / "module.py").is_file() else ""
         test_after = (project / "test_module.py").read_text(encoding="utf8") if (project / "test_module.py").is_file() else ""
         files = [x.name for x in children]
-        green = unittest_green(project, env, profile) if test_after == TEST else False
+        green = unittest_green(project, env, profile) if after == FIXED and test_after == TEST and set(files) == EXPECTED else False
         result = evaluate(before, after, test_before, test_after, files, rc, stdout, red, green, True)
         result.update({"runtime": "Qwen Code CLI", "model": model, "endpoint": endpoint,
                        "max_wall_seconds": max_seconds, "max_tool_calls": 4,
