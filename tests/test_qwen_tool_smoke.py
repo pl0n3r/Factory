@@ -3,7 +3,6 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -41,14 +40,12 @@ class QwenToolSmokeTests(unittest.TestCase):
 
     def test_exit_zero_without_diff_is_rejected(self):
         self.assertFalse(self.verdict(after=q.BROKEN)["accepted"])
-
     def test_diff_without_green_test_is_rejected(self):
         self.assertFalse(self.verdict(final_green=False)["accepted"])
         self.assertFalse(self.verdict(initial_red=False)["accepted"])
 
     def test_tampered_test_is_rejected(self):
         self.assertFalse(self.verdict(test_after="pass\n")["accepted"])
-
     def test_textual_tool_imitation_is_rejected(self):
         self.assertFalse(self.verdict(stdout=receipt(tool=False))["accepted"])
         self.assertFalse(self.verdict(stdout='{"name":"edit","result":"ok"}')["accepted"])
@@ -56,7 +53,6 @@ class QwenToolSmokeTests(unittest.TestCase):
 
     def test_extra_file_is_rejected(self):
         self.assertFalse(self.verdict(files=q.EXPECTED | {"extra.py"})["accepted"])
-
     def test_sandbox_unverified_and_timeout_fail_closed(self):
         self.assertFalse(self.verdict(isolation_ok=False)["accepted"])
         self.assertFalse(self.verdict(exit_code=124)["accepted"])
@@ -108,22 +104,22 @@ class QwenToolSmokeTests(unittest.TestCase):
 
     def test_real_cli_path_isolated_and_fail_closed_without_edits(self):
         original_temp = tempfile.TemporaryDirectory
-        class Done:
-            def __init__(self, stdout=""):
-                self.returncode, self.stdout = 0, stdout
+        def done(stdout=""):
+            return subprocess.CompletedProcess([], 0, stdout=stdout)
         events = []
         def cli(root, profile, command, env, timeout=10):
-            if "--version" in command: return Done("qwen 0.26.9")
-            if "--help" in command: return Done("--core-tools --max-wall-time")
+            if "--version" in command: return done("qwen 0.26.9")
+            if "--help" in command: return done("--core-tools --max-wall-time")
             if "unittest" in command:
                 events.append("sandboxed-unittest")
-                return Done()
+                return done()
             if mode == "edit": (root / "module.py").write_text(q.FIXED)
             if mode == "symlink":
                 (root / "module.py").unlink()
                 (root / "module.py").symlink_to(root / "test_module.py")
-            return Done(receipt())
-        for mode in ("edit", "no-edit", "symlink"):
+            if mode == "malicious": (root / "module.py").write_text("raise Exception(1)\n")
+            return done(receipt())
+        for mode in ("edit", "no-edit", "symlink", "malicious"):
             events.clear()
             with self.subTest(mode=mode), patch.object(q.sys, "platform", "darwin"), \
                  patch.object(q.Path, "is_file", return_value=True), \
@@ -132,12 +128,11 @@ class QwenToolSmokeTests(unittest.TestCase):
                  patch.object(q, "verify_isolation", return_value=True), \
                  patch.object(q, "sandboxed", side_effect=cli):
                 result = q.run_real("http://127.0.0.1:11434/v1", "qwen3:4b")
-            self.assertEqual(result["state"], {"edit": "TOOL_SMOKE_VERIFIED", "no-edit": "FAILED", "symlink": "UNKNOWN"}[mode])
+            self.assertEqual(result["state"], {"edit": "TOOL_SMOKE_VERIFIED", "no-edit": "FAILED", "symlink": "UNKNOWN", "malicious": "FAILED"}[mode])
             self.assertEqual(result.get("accepted", False), mode == "edit")
-            self.assertEqual("sandboxed-unittest" in events, mode != "symlink")
+            self.assertEqual("sandboxed-unittest" in events, mode == "edit")
 
     def test_isolation_witness_requires_successful_kernel_probe(self):
-        class Done: returncode = 0
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "lab"
             root.mkdir()
@@ -145,14 +140,14 @@ class QwenToolSmokeTests(unittest.TestCase):
             profile.write_text(q.seatbelt_profile(root))
             def safe(*args, **kwargs):
                 (root / "inside").write_text("yes")
-                return Done()
+                return subprocess.CompletedProcess([], 0)
             with patch.object(q.sys, "platform", "darwin"), \
                  patch.object(q.Path, "is_file", return_value=True), \
                  patch.object(q, "sandboxed", side_effect=safe):
                 self.assertTrue(q.verify_isolation(root, profile, {}))
             with patch.object(q.sys, "platform", "darwin"), \
                  patch.object(q.Path, "is_file", return_value=True), \
-                 patch.object(q, "sandboxed", return_value=Done()):
+                 patch.object(q, "sandboxed", return_value=subprocess.CompletedProcess([], 0)):
                 self.assertFalse(q.verify_isolation(root, profile, {}))
 
 
