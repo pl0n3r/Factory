@@ -63,7 +63,7 @@ class QwenToolSmokeTests(unittest.TestCase):
         self.assertTrue(q.endpoint_ok("http://127.0.0.1:11434/v1"))
         for bad in ("https://127.0.0.1:11434/v1", "http://localhost:11434/v1",
                     "http://192.168.1.1:11434/v1", "http://127.0.0.1.evil/v1",
-                    "http://127.0.0.1:11434/v1?x=1", "http://user:pw@127.0.0.1:11434/v1"):
+                    "http://127.0.0.1:11434/v1?x=1", "http://user@127.0.0.1:11434/v1"):
             with self.subTest(bad=bad):
                 self.assertFalse(q.endpoint_ok(bad))
 
