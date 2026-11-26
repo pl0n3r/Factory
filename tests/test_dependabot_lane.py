@@ -682,7 +682,7 @@ class DependabotLaneTests(unittest.TestCase):
             patch("scripts.dependabot_lane.api",
                   side_effect=AssertionError("squash prohibido")),
         ):
-            for deadline in (None, 1000 + 20 * 60, 1000 + 22 * 60 - 1):
+            for deadline in (None, 1000 + 20 * 60, 1000 + 25 * 60 - 1):
                 with self.subTest(deadline=deadline):
                     outcome = reconcile(repo, 99, SHA, "token", now=now,
                                         job_deadline=deadline)
@@ -706,13 +706,13 @@ class DependabotLaneTests(unittest.TestCase):
                                 "validate": "success"}) as verify,
         ):
             result = reconcile(repo, 99, SHA, "token", now=now,
-                               job_deadline=1000 + 22 * 60 + 1)
+                               job_deadline=1000 + 25 * 60 + 1)
         self.assertTrue(result["merged"])
         self.assertEqual(merger.call_count, 1)
         verify.assert_called_once_with(repo, sha, "token")
         self.assertEqual(lane.POST_MERGE_MAX_ATTEMPTS[repo.casefold()], 126)
         self.assertEqual(lane.POST_MERGE_MIN_RECONCILE_SECONDS[repo.casefold()],
-                         22 * 60)
+                         25 * 60)
 
     def test_postmerge_exact_main_dispatch_and_success(self):
         merge_sha = "b" * 40
