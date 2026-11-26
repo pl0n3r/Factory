@@ -604,6 +604,43 @@ class T(unittest.TestCase):
         with self.assertRaises(PolicyError):
             sha_less_validate(comments, events[:2] + [mutation, mutation] + events[2:])
 
+
+    def test_sha_less_rate_limit_ignores_historical_owner_force_push_only_before_head(self):
+        comments, events = sha_less_fixture()
+        older = {
+            "event": "head_ref_force_pushed", "id": 34974962877,
+            "commit_id": "c" * 40, "created_at": "2026-10-04T04:56:00Z",
+            "actor": {"login": "pl0n3r", "type": "User"},
+        }
+        newer = {
+            **older, "id": 34974962878, "commit_id": "b" * 40,
+            "created_at": "2026-10-04T04:58:00Z",
+        }
+        history = [older, events[0], newer, *events[1:]]
+        expected = (202, "2026-10-04T05:02:08Z")
+        self.assertEqual(sha_less_validate(comments, history), expected)
+        current = {
+            **older, "id": 34974962879, "commit_id": HEAD,
+            "created_at": "2026-10-04T04:59:30Z",
+        }
+        self.assertEqual(sha_less_validate(
+            comments, history[:4] + [current] + history[4:]), expected)
+        adversarial = {
+            "SHA histórico ausente": {**older, "commit_id": None},
+            "mismo SHA del HEAD": {**older, "commit_id": HEAD},
+            "actor distinto": {**older, "actor": {"login": "intruder", "type": "User"}},
+            "actor incompleto": {**older, "actor": {"login": "pl0n3r"}},
+            "id duplicado": {**older, "id": newer["id"]},
+            "timestamp posterior al HEAD": {**older, "created_at": "2026-10-04T05:00:00Z"},
+        }
+        for label, forged in adversarial.items():
+            with self.subTest(label=label), self.assertRaises(PolicyError):
+                sha_less_validate(comments, [forged, events[0], newer, *events[1:]])
+        with self.subTest(label="historia invertida"), self.assertRaises(PolicyError):
+            sha_less_validate(comments, [newer, events[0], older, *events[1:]])
+        with self.subTest(label="reescritura no HEAD despues del ultimo commit"), self.assertRaises(PolicyError):
+            sha_less_validate(comments, events[:2] + [older] + events[2:])
+
     def test_sha_less_rate_limit_rejects_stale_head_force_push_missing_timeline_and_non_owner(self):
         comments, events = sha_less_fixture()
         cases = {}
