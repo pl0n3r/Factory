@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 
 from scripts.dispatch_inventory import (
     OFFLINE_CANDIDATE_KEYS, OFFLINE_SHA, offline_proposal_from_snapshot,
@@ -19,6 +20,7 @@ OBS_KEYS = {
     "open_total", "available_total", "blocked_causes",
 }
 ACTIVE_STATES = {"reserved", "in_review", "recovery_required"}
+DEPENDENCY_KEY = re.compile(r"(?:%s)#[1-9][0-9]{0,7}" % "|".join(map(re.escape, REPOSITORIES)))
 
 
 def require(condition):
@@ -97,7 +99,7 @@ def candidate_row(key, repo, item, active_paths, start, now, policy_sha, checkou
     require(paths(row["active_claims"]) == active_paths)
     deps = item["dependency_states"]
     require(type(task["depends_on"]) is list and all(
-        type(dep) is str for dep in task["depends_on"]
+        type(dep) is str and DEPENDENCY_KEY.fullmatch(dep) is not None for dep in task["depends_on"]
     ))
     require(type(deps) is dict and len(task["depends_on"]) == len(deps))
     require(set(task["depends_on"]) == set(deps) and key not in deps)
@@ -135,17 +137,18 @@ def proposal_from_observation(observation, evidence, *, checkout_sha, policy_sha
         finished = fresh(observation["finished_at"], started, clock)
         require((finished - started).total_seconds() <= MAX_AGE_SECONDS)
         require(shape(evidence, {"repositories", "candidates", "rate_limit",
-                                 "kill_switch_issue", "seen_idempotency_keys"}))
+                                 "kill_switch_issue", "kill_switch_observed_at", "seen_idempotency_keys"}))
         require(shape(evidence["repositories"], set(REPOSITORIES)))
         require(shape(observation["fingerprints"], set(REPOSITORIES)))
         require(shape(observation["counts"], set(REPOSITORIES)))
         budget = evidence["rate_limit"]
         require(shape(budget, {"limit", "remaining"}))
         quota(budget["limit"], budget["remaining"])
+        fresh(evidence["kill_switch_observed_at"], finished, clock)
         switch = evaluate_unattended_kill_switch(evidence["kill_switch_issue"])
         require(switch.state == "RUNNING" and not switch.global_pause)
         reports, projects, rows = [], [], []
-        available = set()
+        available, open_keys, identities = set(), set(), set()
         candidates = evidence["candidates"]
         require(type(candidates) is dict and 0 < len(candidates) <= 100)
         for repo in REPOSITORIES:
@@ -154,6 +157,10 @@ def proposal_from_observation(observation, evidence, *, checkout_sha, policy_sha
             report, states, active = stable_repository(
                 repo, evidence["repositories"][repo], digest, finished, clock,
             )
+            identity = evidence["repositories"][repo]["identity"]
+            require(identity not in identities)
+            identities.add(identity)
+            open_keys.update(states)
             reports.append(report)
             leaves = []
             for key, state in states.items():
@@ -169,12 +176,19 @@ def proposal_from_observation(observation, evidence, *, checkout_sha, policy_sha
             # This is a candidate-only projection, NOT a full work inventory.
             projects.append({"repository_ref": f"pl0n3r/{repo}", "leaves": leaves, "narrative": []})
         require(available == set(candidates))
+        for item in candidates.values():
+            require(all((dep in open_keys) == (state == "open")
+                        for dep, state in item["dependency_states"].items()))
         diagnosis = diagnose_queue(assemble_inventory(reports, None, budget))
+        require(all(type(counts) is dict and all(type(n) is int for n in counts.values())
+                    for counts in observation["counts"].values()))
         require(observation["counts"] == {
             repo: diagnosis["repositories"][repo]["counts"] for repo in REPOSITORIES
         })
         for field in ("open_total", "available_total"):
             require(type(observation[field]) is int and observation[field] == diagnosis[field])
+        require(type(observation["blocked_causes"]) is dict and all(
+            type(n) is int for n in observation["blocked_causes"].values()))
         require(observation["blocked_causes"] == diagnosis["blocked_cause_totals"])
         receipt = offline_proposal_from_snapshot({
             "version": 1, "policy_sha": policy_sha,

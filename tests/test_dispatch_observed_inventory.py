@@ -22,7 +22,7 @@ def fixture():
            "reason": "capacity_not_observed", "open_total": 2, "available_total": 1,
            "blocked_causes": dict.fromkeys(("dependency", "claims", "human_gate", "planned", "unknown"), 0)}
     evidence = {"repositories": {}, "candidates": {}, "rate_limit": {"limit": 5000, "remaining": 4000},
-                "seen_idempotency_keys": [], "kill_switch_issue": {
+                "seen_idempotency_keys": [], "kill_switch_observed_at": END, "kill_switch_issue": {
                     "number": 767, "url": CANONICAL_SOURCE_URL, "repository_url": CANONICAL_REPOSITORY_URL,
                     "state": "closed", "user": {"login": "pl0n3r"},
                     "body": '<!-- factory-unattended-kill-switch {"version":1,"state":"RUNNING","owner":"pl0n3r"} -->',
@@ -91,7 +91,8 @@ class ObservedInventoryTests(unittest.TestCase):
     def test_missing_stale_or_drifting_evidence(self):
         for case in ("missing_repo", "missing_candidate", "missing_lease", "drift",
                      "identity", "fingerprint", "counts", "policy", "paused", "unknown_switch",
-                     "stale_candidate", "future_candidate", "quota", "unknown_census"):
+                     "stale_candidate", "future_candidate", "quota", "unknown_census",
+                     "stale_switch", "boolean_count", "duplicate_identity"):
             with self.subTest(case=case):
                 obs, evidence = fixture()
                 source = evidence["repositories"]["Factory"]
@@ -121,6 +122,15 @@ class ObservedInventoryTests(unittest.TestCase):
                     item["observed_at"] = START
                 elif case == "future_candidate":
                     item["observed_at"] = "2026-01-01T00:01:00+00:00"
+                elif case == "stale_switch":
+                    evidence["kill_switch_observed_at"] = START
+                elif case == "boolean_count":
+                    obs["counts"]["Factory"]["available"] = True
+                elif case == "duplicate_identity":
+                    other = evidence["repositories"]["Condor"]
+                    other["identity"] = source["identity"]
+                    obs["fingerprints"]["Condor"] = fingerprint([other["identity"],
+                        require_stable_github_sweeps("Condor", other["first"], other["second"])])
                 elif case == "quota":
                     evidence["rate_limit"]["remaining"] = 0
                 else:
@@ -132,7 +142,8 @@ class ObservedInventoryTests(unittest.TestCase):
 
     def test_candidate_claims_dependencies_and_gates_fail_closed(self):
         for case in ("identity", "claims", "active_claims", "overlap", "dependency",
-                     "dependency_missing", "human", "reservation", "authority", "unverified", "malformed"):
+                     "dependency_missing", "dependency_contradiction", "human", "reservation",
+                     "authority", "unverified", "malformed"):
             with self.subTest(case=case):
                 obs, evidence = fixture()
                 item = evidence["candidates"]["Factory#1"]
@@ -146,8 +157,12 @@ class ObservedInventoryTests(unittest.TestCase):
                 elif case == "overlap":
                     row["claims"] = item["task"]["claims"] = ["scripts/other.py"]
                 elif case == "dependency":
-                    item["dependency_states"]["Factory#3"] = "open"
-                    row["dependencies_open"] = ["Factory#3"]
+                    item["task"]["depends_on"] = ["Factory#2"]
+                    item["dependency_states"] = {"Factory#2": "open"}
+                    row["dependencies_open"] = ["Factory#2"]
+                elif case == "dependency_contradiction":
+                    item["task"]["depends_on"] = ["Factory#2"]
+                    item["dependency_states"] = {"Factory#2": "completed"}
                 elif case == "dependency_missing":
                     item["dependency_states"].clear()
                 elif case == "human":
