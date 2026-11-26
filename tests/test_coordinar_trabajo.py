@@ -7510,5 +7510,47 @@ class OpenIssuesInventoryShiftTests(unittest.TestCase):
             api.open_issues()
         self.assertEqual(len(calls), 1)
 
+
+class LeaseScanByCanonicalBranchTests(unittest.TestCase):
+    """Solo se leen leases de Issues con rama canónica o etiqueta de trabajo activo."""
+
+    @staticmethod
+    def _issues(*specs):
+        return [{"number": n, "labels": [{"name": l} for l in labels]} for n, labels in specs]
+
+    def test_scan_limited_to_branches_and_active_labels(self) -> None:
+        class Api:
+            def canonical_branch_issue_numbers(self):
+                return {5, 9}
+        issues = self._issues((1, []), (5, []), (7, [STATUS_RESERVED]), (9, []), (11, []))
+        self.assertEqual(coordinator.lease_scan_numbers(Api(), issues), {5, 7, 9})
+
+    def test_unreadable_branch_inventory_falls_back_to_full_scan(self) -> None:
+        class Api:
+            def canonical_branch_issue_numbers(self):
+                raise GitHubError(500, "boom")
+        self.assertIsNone(coordinator.lease_scan_numbers(Api(), self._issues((1, []))))
+        self.assertIsNone(coordinator.lease_scan_numbers(object(), self._issues((1, []))))
+
+    def test_branch_inventory_parses_only_canonical_numbers(self) -> None:
+        api = GitHub("pl0n3r/brvtal", "fake-token")
+        prefix = coordinator.PROFILE.branch_prefix
+        paths = []
+
+        def serve(method, path, payload=None, allow=()):
+            paths.append(path)
+            return [{"ref": f"refs/heads/{prefix}12"}, {"ref": f"refs/heads/{prefix}abc"},
+                    {"ref": f"refs/heads/{prefix}012"}, {"ref": f"refs/heads/{prefix}7"}]
+        api.request = serve
+        self.assertEqual(api.canonical_branch_issue_numbers(), {7, 12})
+        self.assertIn("/git/matching-refs/heads/", paths[0])
+
+    def test_branch_inventory_rejects_malformed_payload(self) -> None:
+        api = GitHub("pl0n3r/brvtal", "fake-token")
+        for bad in ({"message": "x"}, [{"ref": "refs/heads/otra/1"}], ["fila"]):
+            api.request = lambda method, path, payload=None, allow=(), bad=bad: bad
+            with self.assertRaisesRegex(CoordinationError, "ramas canónicas ilegible"):
+                api.canonical_branch_issue_numbers()
+
 if __name__ == "__main__":
     unittest.main()
