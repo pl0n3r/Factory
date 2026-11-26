@@ -5786,11 +5786,19 @@ def recover_orphaned_issue_lock(
             "pl0n3r/GrindFlow",
             "pl0n3r/GrindFlow/.github/workflows/work-coordination.yml@refs/heads/main",
         ),
+        "pl0n3r/brvtal": (
+            "pl0n3r/brvtal",
+            "pl0n3r/brvtal/.github/workflows/work-coordination.yml@refs/heads/main",
+        ),
     }
     target = authorized.get(api.repo.casefold() if isinstance(api.repo, str) else "")
     if target is None or actor != "pl0n3r" or association != "OWNER":
         raise CoordinationError("Solo el propietario de un repositorio autorizado repara locks huérfanos.")
+    brvtal = target[0] == "pl0n3r/brvtal"
+    if brvtal and PROFILE.name != "en":
+        raise CoordinationError("BRVTAL requiere el perfil EN de coordinación.")
     if (type(issue_number) is not int or issue_number <= 0
+            or not isinstance(expected_sha, str)
             or re.fullmatch(r"[a-f0-9]{40}", expected_sha) is None):
         raise CoordinationError("Identidad SHA del lock inválida.")
     # A GitHub Actions runner under the canonical repository-wide concurrency
@@ -5798,7 +5806,7 @@ def recover_orphaned_issue_lock(
     if (os.getenv("GITHUB_REPOSITORY") != target[0]
             or os.getenv("GITHUB_EVENT_NAME") != "issue_comment"
             or os.getenv("GITHUB_WORKFLOW_REF", "") != target[1]
-            or (target[0] == "pl0n3r/GrindFlow"
+            or (target[0] in ("pl0n3r/GrindFlow", "pl0n3r/brvtal")
                 and os.getenv("GITHUB_REF") != "refs/heads/main")
             or re.fullmatch(r"[1-9][0-9]*",
                             os.getenv("GITHUB_RUN_ID", "")) is None):
@@ -5812,6 +5820,21 @@ def recover_orphaned_issue_lock(
             or STATUS_BLOCKED not in label_names(issue)
             or active_reservation(api, issue_number) is not None):
         raise CoordinationError("Issue con autoridad activa o estado incompatible.")
+    def require_brvtal_terminal(candidate: dict[str, Any]) -> None:
+        # This consumer repair is deliberately narrower: no work branch,
+        # assigned owner or related open PR may survive without a lease.
+        if (label_names(candidate).intersection(STATUS_LABELS) != {STATUS_BLOCKED}
+                or candidate.get("assignees") != []
+                or api.branch_sha(branch_for_issue(issue_number)) is not None):
+            raise CoordinationError("BRVTAL: estado terminal sin trabajo no acreditado.")
+        snapshot = orphan_adoption_pull_snapshot(api.open_pulls())
+        if any(record[3] == branch_for_issue(issue_number)
+               or issue_number in closing_issues(record[2] or "")
+               for record in snapshot):
+            raise CoordinationError("BRVTAL: existe PR abierto relacionado.")
+
+    if brvtal:
+        require_brvtal_terminal(issue)
     commit = api.request("GET", f"/repos/{api.repo}/git/commits/{expected_sha}")
     if not isinstance(commit, dict) or commit.get("sha") != expected_sha:
         raise CoordinationError("Commit de lock no autenticado.")
@@ -5883,6 +5906,8 @@ def recover_orphaned_issue_lock(
             or api.issue(issue_number) != issue
             or api.branch_sha(branch_for_issue(issue_number)) != work_sha):
         raise CoordinationError("Estado cambió antes de liberar el lock.")
+    if brvtal:
+        require_brvtal_terminal(issue)
     # Existing GraphQL updateRefs(beforeOid=expected_sha, afterOid=zero).
     # It must reject races rather than silently releasing another token.
     api.release_issue_lock(issue_number, expected_sha)
@@ -6099,6 +6124,11 @@ def parse_comment_command(body: str) -> tuple[str, str | None]:
         return "tomar", None
     if value == PROFILE.force_release:
         return "liberar-forzado", None
+    if PROFILE.name == "en" and body.startswith("/recover-orphan-lock "):
+        # English command is exact, not an alias for active lease recovery.
+        if re.fullmatch(r"/recover-orphan-lock [a-f0-9]{40}", body) is None:
+            raise CoordinationError("Recuperación de lock requiere SHA completo.")
+        return "recuperar-lock-huerfano", body.split(" ", 1)[1]
     if PROFILE.name == "es" and value.startswith("/recuperar-lock-huerfano "):
         sha = value[len("/recuperar-lock-huerfano "):]
         if re.fullmatch(r"[a-f0-9]{40}", sha) is None:
@@ -6197,6 +6227,8 @@ def process_comment(
         )
     elif command == "recuperar-lock-huerfano":
         assert reservation_id is not None
+        if PROFILE.name == "en" and api.repo.casefold() != "pl0n3r/brvtal":
+            raise CoordinationError("Recuperación EN no autorizada para este repositorio.")
         recover_orphaned_issue_lock(
             api, issue_number, actor, association, reservation_id,
         )

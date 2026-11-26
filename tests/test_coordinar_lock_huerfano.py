@@ -347,6 +347,133 @@ class RecoveryLockTests(unittest.TestCase):
         self.assertEqual([], consumer.releases)
 
 
+class BrvtalOrphanLockTests(unittest.TestCase):
+    """Offline EN dispatch; only the existing CAS can mutate the fake ref."""
+
+    class Api(FakeApi):
+        repo = "pl0n3r/brvtal"
+
+        def __init__(self):
+            super().__init__()
+            self.refs["main"] = "d" * 40
+            self.issue_data["assignees"] = []
+            self.pulls = []
+
+        def open_pulls(self):
+            return deepcopy(self.pulls)
+
+        def request(self, method, path, payload=None, allow=()):
+            if method == "GET" and path.endswith("/compare/" + PARENT + "...main"):
+                return {"behind_by": 0, "status": "ahead"}
+            return super().request(method, path, payload, allow)
+
+    def setUp(self):
+        previous = coordinator.PROFILE.name
+        self.addCleanup(coordinator.configure_profile, previous)
+        coordinator.configure_profile("en")
+        self.runner = {
+            **RUNNER,
+            "GITHUB_REPOSITORY": "pl0n3r/brvtal",
+            "GITHUB_WORKFLOW_REF":
+                "pl0n3r/brvtal/.github/workflows/work-coordination.yml@refs/heads/main",
+            "GITHUB_REF": "refs/heads/main",
+        }
+
+    def dispatch(self, api, *, token=LOCK, actor="pl0n3r", association="OWNER",
+                 env=None):
+        with patch.dict(os.environ, {**self.runner, **(env or {})}, clear=True):
+            with patch.object(coordinator, "require_global_running"):
+                with patch.object(coordinator, "datetime", wraps=datetime) as clock:
+                    clock.now.return_value = DATE
+                    clock.fromisoformat.side_effect = datetime.fromisoformat
+                    coordinator.process_comment(
+                        api, ISSUE, actor, association, "/recover-orphan-lock " + token,
+                    )
+
+    def test_en_exact_command_and_es_unchanged(self):
+        valid = "/recover-orphan-lock " + LOCK
+        self.assertEqual(("recuperar-lock-huerfano", LOCK),
+                         coordinator.parse_comment_command(valid))
+        for body in (valid + " ", " " + valid, valid + "\n", valid + " extra",
+                     valid.replace(" ", "  "), valid.upper(),
+                     "/recover-orphan-lock " + LOCK[:-1],
+                     "/recover-orphan-lock " + "A"*40,
+                     "/recuperar-lock-huerfano " + LOCK):
+            with self.subTest(body=body):
+                with self.assertRaises(coordinator.CoordinationError):
+                    coordinator.parse_comment_command(body)
+        coordinator.configure_profile("es")
+        self.assertEqual(("recuperar-lock-huerfano", LOCK),
+                         coordinator.parse_comment_command(
+                             "/recuperar-lock-huerfano " + LOCK))
+        with self.assertRaises(coordinator.CoordinationError):
+            coordinator.parse_comment_command(valid)
+
+    def test_brvtal_cas_only_with_parent_ancestor(self):
+        api = self.Api()
+        before = deepcopy((api.issue_data, api.comments, api.record, api.pulls))
+        self.dispatch(api)
+        self.assertEqual([(ISSUE, LOCK)], api.releases)
+        self.assertEqual({"main": "d"*40}, api.refs)
+        self.assertEqual(before, (api.issue_data, api.comments, api.record, api.pulls))
+        with self.assertRaises(coordinator.CoordinationError):
+            self.dispatch(api)
+
+    def test_brvtal_rejects_nonterminal_or_untrusted(self):
+        for name, mutation in (
+            ("available", lambda a: a.issue_data.update(
+                labels=[{"name": coordinator.STATUS_AVAILABLE}])),
+            ("ambiguous", lambda a: a.issue_data["labels"].append(
+                {"name": coordinator.STATUS_RESERVED})),
+            ("assignee", lambda a: a.issue_data.update(
+                assignees=[{"login": "pl0n3r"}])),
+            ("branch", lambda a: a.refs.update({"work/issue-1946": PARENT})),
+            ("signature", lambda a: a.record["verification"].update(verified=False)),
+            ("tree", lambda a: a.record["tree"].update(sha="d"*40)),
+            ("nonce", lambda a: a.record.update(message="bad")),
+            ("other consumer", lambda a: setattr(a, "repo", "pl0n3r/GrindFlow")),
+            ("fork", lambda a: setattr(a, "repo", "evil/brvtal")),
+        ):
+            with self.subTest(name=name):
+                api = self.Api()
+                mutation(api)
+                with self.assertRaises(coordinator.CoordinationError):
+                    self.dispatch(api)
+                self.assertEqual([], api.releases)
+        for kwargs in (
+            {"token": "f"*40}, {"actor": "other"}, {"association": "MEMBER"},
+            {"env": {"GITHUB_REPOSITORY": "evil/brvtal"}},
+            {"env": {"GITHUB_EVENT_NAME": "workflow_dispatch"}},
+            {"env": {"GITHUB_REF": "refs/heads/topic"}},
+            {"env": {"GITHUB_RUN_ID": "bad"}},
+            {"env": {"GITHUB_WORKFLOW_REF": self.runner["GITHUB_WORKFLOW_REF"] + "-fake"}},
+        ):
+            api = self.Api()
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(coordinator.CoordinationError):
+                    self.dispatch(api, **kwargs)
+                self.assertEqual([], api.releases)
+
+    def test_brvtal_rejects_lease_and_cas_races(self):
+        api = self.Api()
+        with patch.object(coordinator, "active_reservation", return_value={"active": True}):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.dispatch(api)
+        with patch.object(api, "release_issue_lock",
+                          side_effect=coordinator.CoordinationError("CAS race")):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.dispatch(api)
+        pull = {"number": 5, "state": "open", "body": f"Closes #{ISSUE}",
+                "head": {"ref": "other", "sha": PARENT,
+                         "repo": {"full_name": api.repo}},
+                "base": {"ref": "main", "sha": "d"*40}}
+        with patch.object(api, "open_pulls", side_effect=[[], [pull]]):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.dispatch(api)
+        self.assertEqual([], api.releases)
+        self.assertEqual(LOCK, api.refs["coordinacion/lock-issue-1946"])
+
+
 # Nueva primitiva offline: no debe asociarse a parse_comment_command.
 class LiveOwnerV3RecoveryTests(unittest.TestCase):
     SESSION = "cbb53f02-a68b-4d1d-b118-4dfc4efea06d"
