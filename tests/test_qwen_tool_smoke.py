@@ -76,7 +76,6 @@ class QwenToolSmokeTests(unittest.TestCase):
             (root / "module.py").write_text(q.FIXED)
             self.assertTrue(q.unittest_green(root, env))
             self.assertEqual(original, (root / "test_module.py").read_bytes())
-
     def test_cleanup_owns_only_private_temp_directory(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -87,7 +86,6 @@ class QwenToolSmokeTests(unittest.TestCase):
                 (path / "module.py").write_text(q.BROKEN)
             self.assertFalse(path.exists())
             self.assertEqual(witness.read_text(), "untouched")
-
 
     def test_real_cli_path_isolated_and_fail_closed_without_edits(self):
         original_evaluate = q.evaluate
@@ -101,26 +99,31 @@ class QwenToolSmokeTests(unittest.TestCase):
             if "unittest" in command:
                 events.append("sandboxed-unittest")
                 return done()
+            events.append("model-invoked")
             if mode == "edit": (root / "module.py").write_text(q.FIXED)
+            if mode == "crlf": (root / q.TEST_FILE).write_bytes(q.TEST.replace("\n", "\r\n").encode())
+            if mode == "profile": profile.write_text("(allow default)")
             if mode == "symlink":
                 (root / "module.py").unlink()
                 (root / "module.py").symlink_to(root / "test_module.py")
             if mode == "malicious": (root / "module.py").write_text("raise Exception(1)\n")
             if mode == "exit55": return done(receipt(), code=55, stderr="tool call limit reached")
             return done(receipt())
-        for mode in ("edit", "no-edit", "symlink", "malicious", "exit55"):
+        for mode in ("edit", "no-edit", "symlink", "malicious", "exit55", "crlf", "profile", "tools"):
             events.clear()
             with self.subTest(mode=mode), patch.object(q.sys, "platform", "darwin"), \
                  patch.object(q.Path, "is_file", return_value=True), \
                  patch.object(q.shutil, "which", return_value="/usr/bin/qwen"), \
                  patch.object(q.tempfile, "TemporaryDirectory", side_effect=lambda **_: original_temp(prefix="qwen-smoke-", dir="/tmp")), \
                  patch.object(q, "verify_isolation", return_value=True), \
+                 patch.object(q, "tool_inventory_verified", return_value=(mode != "tools")), \
                  patch.object(q, "sandboxed", side_effect=cli), \
                  patch.object(q, "evaluate", side_effect=lambda *a, **kw: original_evaluate(*a, synthetic=True, **kw)):
                 result = q.run_real("http://127.0.0.1:11434/v1", "qwen3:4b")
-            self.assertEqual(result["state"], {"edit": "FIXTURE_ONLY", "no-edit": "FAILED", "symlink": "UNKNOWN", "malicious": "FAILED", "exit55": "FAILED"}[mode])
+            self.assertEqual(result["state"], {"edit": "FIXTURE_ONLY", "no-edit": "FAILED", "symlink": "UNKNOWN", "malicious": "FAILED", "exit55": "FAILED", "crlf": "FAILED", "profile": "FAILED", "tools": "UNKNOWN"}[mode])
             self.assertEqual(result.get("accepted", False), mode == "edit")
             self.assertEqual("sandboxed-unittest" in events, mode == "edit")
+            self.assertEqual("model-invoked" in events, mode != "tools")
             if mode == "exit55": self.assertEqual(result["exit_55_cause"], "budget-evidenced")
 
     def test_isolation_witness_requires_successful_kernel_probe(self):

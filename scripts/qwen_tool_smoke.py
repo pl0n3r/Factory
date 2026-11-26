@@ -67,7 +67,6 @@ def evaluate(before, after, test_before, test_after, files, exit_code, stdout,
             "initial_red": initial_red, "final_green": final_green,
             "file_inventory_ok": set(files) == EXPECTED, "isolation_verified": isolation_ok,
             "observed_edit_calls": len(calls), "successful_edit_calls": len(calls & results)}
-
 def endpoint_ok(url):
     try:
         u = urlsplit(url)
@@ -76,8 +75,6 @@ def endpoint_ok(url):
                 not u.username and not u.password and not u.query and not u.fragment)
     except ValueError:
         return False
-
-
 def private_lab(root):
     """Reject symlinks, other owners and non-private parent/lab directories."""
     if root.name != "lab" or not root.parent.name.startswith("qwen-smoke-"):
@@ -88,8 +85,6 @@ def private_lab(root):
         return False
     return all(stat.S_ISDIR(item.st_mode) and item.st_uid == os.getuid() and
                stat.S_IMODE(item.st_mode) == 0o700 for item in entries)
-
-
 def seatbelt_profile(root):
     """Restrictive macOS kernel policy inherited by subprocesses."""
     if not private_lab(root):
@@ -104,8 +99,6 @@ def seatbelt_profile(root):
         '(allow file-write* (subpath "'+safe+'") (literal "/dev/null"))',
         '(allow network-outbound (remote ip "127.0.0.1:*"))',
     ]) + '\n'
-
-
 def sandboxed(root, profile, command, env, timeout=10):
     return subprocess.run([SANDBOX_EXEC, "-f", str(profile), *command],
                           cwd=root, env=env, capture_output=True, text=True,
@@ -149,6 +142,11 @@ def unittest_green(folder, env, profile=None):
     return p.returncode == 0
 
 
+VERIFIED_TOOL_VERSIONS = frozenset()  # No audited bare-mode inventory as of 2026-11-25.
+
+def tool_inventory_verified(version):
+    return version in VERIFIED_TOOL_VERSIONS
+
 def run_real(endpoint, model, max_seconds=90):
     if endpoint != LOCAL_ENDPOINT or model != LOCAL_MODEL:
         return {"state": "UNKNOWN", "reason": "invalid local endpoint or model"}
@@ -168,6 +166,7 @@ def run_real(endpoint, model, max_seconds=90):
         (project / TEST_FILE).write_text(TEST, encoding="utf8")
         profile = root / "profile.sb"
         profile.write_text(seatbelt_profile(root), encoding="utf8")
+        profile_digest = digest(profile.read_bytes())
         env = {"HOME": str(home), "QWEN_HOME": str(home / ".qwen"),
                "PATH": os.pathsep.join([str(Path(qwen).parent), str(Path(sys.executable).parent), "/usr/bin", "/bin"]),
                "NO_COLOR": "1", "CI": "1", "PYTHONDONTWRITEBYTECODE": "1",
@@ -185,14 +184,16 @@ def run_real(endpoint, model, max_seconds=90):
             return {"state": "UNKNOWN", "reason": "CLI flags/version unverified inside sandbox"}
         version_match = re.search(r"\b\d+\.\d+\.\d+\b", about.stdout[:256])
         version = version_match.group(0) if version_match else "UNKNOWN"
+        if not tool_inventory_verified(version):
+            return {"state": "UNKNOWN", "reason": "bare-mode tool inventory unverified; Qwen task not invoked", "runtime_version": version}
         argv = [qwen, "--bare", "--auth-type", "openai", "--openai-base-url", LOCAL_ENDPOINT,
                 "--openai-api-key", token_urlsafe(16), "--model", LOCAL_MODEL,
                 "--approval-mode", "auto-edit", "--core-tools", "read_file,edit",
                 "--max-tool-calls", "4", "--max-session-turns", "12",
                 "--max-wall-time", str(max_seconds), "--output-format", "stream-json",
                 "-p", "Read module.py, fix triple so triple(7)==21 by editing module.py. Do not edit test_module.py or any other file."]
-        before = (project / MODULE_FILE).read_text(encoding="utf8")
-        test_before = (project / TEST_FILE).read_text(encoding="utf8")
+        before = (project / MODULE_FILE).read_bytes().decode("utf8")
+        test_before = (project / TEST_FILE).read_bytes().decode("utf8")
         try:
             done = sandboxed(project, profile, argv, env, timeout=max_seconds+8)
             rc, stdout, stderr = done.returncode, done.stdout, done.stderr or ""
@@ -201,10 +202,11 @@ def run_real(endpoint, model, max_seconds=90):
         children = list(project.iterdir())
         if any(x.is_symlink() for x in children):
             return {"state": "UNKNOWN", "reason": "symlink in fixture; refusing unsandboxed reads"}
-        after = (project / MODULE_FILE).read_text(encoding="utf8") if (project / MODULE_FILE).is_file() else ""
-        test_after = (project / TEST_FILE).read_text(encoding="utf8") if (project / TEST_FILE).is_file() else ""
+        after = (project / MODULE_FILE).read_bytes().decode("utf8") if (project / MODULE_FILE).is_file() else ""
+        test_after = (project / TEST_FILE).read_bytes().decode("utf8") if (project / TEST_FILE).is_file() else ""
         files = [x.name for x in children]
-        green = unittest_green(project, env, profile) if after == FIXED and test_after == TEST and set(files) == EXPECTED else False
+        profile_unchanged = digest(profile.read_bytes()) == profile_digest
+        green = unittest_green(project, env, profile) if profile_unchanged and after == FIXED and test_after == TEST and set(files) == EXPECTED else False
         result = evaluate(before, after, test_before, test_after, files, rc, stdout, red, green, True)
         if rc == 55:
             result["exit_55_cause"] = ("budget-evidenced" if re.search(r"budget|tool.?call.?limit|turn.?limit", stderr[:2048], re.I) else "unknown")
