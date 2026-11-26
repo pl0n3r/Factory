@@ -53,10 +53,10 @@ POST_MERGE_CI = {
 }
 
 # El Validate nativo de AutoFactory admite 20 min. Antes del squash
-# irreversible se exigen además 2 min para dispatch, identidad y recibo.
+# irreversible se exigen 5 min para dispatch, polling, identidad y recibo.
 # Los jobs actuales de reconciliación duran 20 min: en este consumidor
-# se aplaza el squash hasta que un caller autorizado acredite >=22 min.
-POST_MERGE_MIN_RECONCILE_SECONDS = {"pl0n3r/autofactory": 22 * 60}
+# se aplaza el squash hasta que un caller autorizado acredite >=25 min.
+POST_MERGE_MIN_RECONCILE_SECONDS = {"pl0n3r/autofactory": 25 * 60}
 POST_MERGE_MAX_ATTEMPTS = {"pl0n3r/autofactory": 126}
 
 
