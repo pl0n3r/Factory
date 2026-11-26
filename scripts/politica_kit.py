@@ -749,6 +749,17 @@ def _sha_less_timeline_retry(
                 raise PolicyError("Comentarios con IDs repetidos.")
             comment_by_id[item_id] = item
 
+    # A PR timeline can preserve genuine ref rewrites of earlier HEADs.
+    # They must not become evidence for a retry on the current exact HEAD.
+    latest_head_index = max((
+        i for i, item in enumerate(timeline)
+        if isinstance(item, dict) and item.get("event") == "committed"
+        and item.get("sha") == head_sha
+    ), default=-1)
+    historical_force_ids: set[int] = set()
+    historical_force_actors: list[str] = []
+    historical_force_at: str | None = None
+
     last_commit: str | None = None
     last_commit_index = -1
     seen_event_ids: set[int] = set()
@@ -773,6 +784,29 @@ def _sha_less_timeline_retry(
             mutation_at = _parse_iso_timestamp(
                 event.get("created_at"), noun="Timestamp de force-push"
             )
+            if index < latest_head_index:
+                # Only audited, chronologically prior OWNER rewrites are history.
+                # They never satisfy the current-HEAD mutation/retry requirement.
+                if not (
+                    isinstance(mutation_sha, str)
+                    and SHA_RE.fullmatch(mutation_sha)
+                    and mutation_sha != head_sha
+                    and type(mutation_id) is int
+                    and mutation_id > 0
+                    and mutation_id not in historical_force_ids
+                    and isinstance(actor, dict)
+                    and actor.get("type") == "User"
+                    and isinstance(actor.get("login"), str)
+                    and bool(actor["login"])
+                    and mutation_at < head_committed_at
+                    and (historical_force_at is None
+                         or historical_force_at < mutation_at)
+                ):
+                    raise PolicyError("Timeline con mutación de HEAD no correlacionable.")
+                historical_force_ids.add(mutation_id)
+                historical_force_actors.append(actor["login"])
+                historical_force_at = mutation_at
+                continue
             if not (
                 head_mutation is None
                 and last_commit == head_sha
@@ -826,6 +860,18 @@ def _sha_less_timeline_retry(
 
     if last_commit != head_sha or last_commit_index < 0:
         raise PolicyError("Timeline no prueba el último commit del HEAD exacto.")
+    if historical_force_actors:
+        # The authenticated timeline must also tie each older ref rewrite
+        # to an OWNER identity; an unrelated actor cannot be silently ignored.
+        authenticated_owners = {
+            event["user"]["login"] for _, event in witnessed
+            if event.get("author_association") == "OWNER"
+            and event["user"].get("type") == "User"
+        }
+        if (not authenticated_owners
+                or any(login not in authenticated_owners
+                       for login in historical_force_actors)):
+            raise PolicyError("Timeline con mutación de HEAD no correlacionable.")
 
     previous_rate_limits: list[tuple[int, dict[str, Any]]] = []
     owner_requests: list[tuple[int, dict[str, Any]]] = []
