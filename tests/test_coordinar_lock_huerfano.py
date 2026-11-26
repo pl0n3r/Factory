@@ -464,6 +464,64 @@ class LiveOwnerV3RecoveryTests(unittest.TestCase):
         with self.assertRaises(coordinator.CoordinationError):
             self.call(api)
 
+    def test_live_v3_recovery_estado_unico_y_owner_preservados(self):
+        api = self.LiveApi()
+        api.issue_data["labels"] = [
+            {"name": coordinator.STATUS_RECOVERY}, {"name": "tipo: error"},
+        ]
+        api.issue_data["assignees"] = [{"login": "pl0n3r"}]
+        before = deepcopy((api.issue_data, api.comments, api.pull_record,
+                           api.refs["trabajo/issue-1946"]))
+        self.assertEqual("cas_only", self.call(api)["result"])
+        self.assertEqual([(ISSUE, LOCK)], api.releases)
+        self.assertNotIn("coordinacion/lock-issue-1946", api.refs)
+        self.assertEqual(before, (api.issue_data, api.comments, api.pull_record,
+                                  api.refs["trabajo/issue-1946"]))
+
+    def test_live_v3_rechaza_estados_contradictorios_y_asignacion_invalida(self):
+        for state in (coordinator.STATUS_REVIEW, coordinator.STATUS_RECOVERY):
+            for conflict in coordinator.STATUS_LABELS:
+                if conflict == state:
+                    continue
+                with self.subTest(state=state, conflict=conflict):
+                    api = self.LiveApi()
+                    api.issue_data["labels"] = [
+                        {"name": state}, {"name": conflict},
+                    ]
+                    api.issue_data["assignees"] = [{"login": "pl0n3r"}]
+                    with self.assertRaises(coordinator.CoordinationError):
+                        self.call(api)
+                    self.assertEqual([], api.releases)
+        for assignees in (None, [], [{"login": "other"}],
+                          [{"login": "pl0n3r"}, {"login": "other"}],
+                          [{"login": "pl0n3r"}, {"login": "pl0n3r"}],
+                          [None], {"login": "pl0n3r"}, [{}]):
+            with self.subTest(assignees=assignees):
+                api = self.LiveApi()
+                api.issue_data["labels"] = [{"name": coordinator.STATUS_RECOVERY}]
+                if assignees is not None:
+                    api.issue_data["assignees"] = assignees
+                with self.assertRaises(coordinator.CoordinationError):
+                    self.call(api)
+                self.assertEqual([], api.releases)
+                self.assertEqual(LOCK, api.refs["coordinacion/lock-issue-1946"])
+
+    def test_live_v3_recovery_rechaza_carrera_y_marker_no_bot(self):
+        api = self.LiveApi()
+        api.issue_data["labels"] = [{"name": coordinator.STATUS_RECOVERY}]
+        api.issue_data["assignees"] = [{"login": "pl0n3r"}]
+        before = deepcopy(api.issue_data)
+        after = deepcopy(before)
+        after["assignees"] = [{"login": "other"}]
+        with patch.object(api, "issue", side_effect=[before, after]):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.call(api)
+        self.assertEqual([], api.releases)
+        api.comments[0]["user"]["login"] = "untrusted-user"
+        with self.assertRaises(coordinator.CoordinationError):
+            self.call(api)
+        self.assertEqual([], api.releases)
+
     def test_live_v3_rechaza_replay_roles_y_falsificaciones(self):
         for actor, association in (("attacker", "OWNER"),
                                    ("pl0n3r", "COLLABORATOR")):

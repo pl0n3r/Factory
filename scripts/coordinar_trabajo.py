@@ -5947,13 +5947,21 @@ def recover_live_owner_v3_orphaned_issue_lock(
     issue = api.issue(issue_number)
     reserved = active_reservation(api, issue_number)
     if (not isinstance(issue, dict) or issue.get("state") != "open"
-            or "pull_request" in issue or STATUS_REVIEW not in label_names(issue)
+            or "pull_request" in issue
+            or not (_canonical_status_is(issue, STATUS_REVIEW)
+                    or _canonical_status_is(issue, STATUS_RECOVERY))
             or not valid_reservation_payload(reserved)
             or reserved.get("version") != 3 or reserved.get("active") is not True
             or reserved.get("owner") != actor
             or reserved.get("reservation_id") != session
             or reserved.get("branch") != branch):
         raise CoordinationError("Reserva V3 activa y titular exactos no acreditados.")
+    if _canonical_status_is(issue, STATUS_RECOVERY):
+        assignees = issue.get("assignees")
+        if (not isinstance(assignees, list) or len(assignees) != 1
+                or not isinstance(assignees[0], dict)
+                or assignees[0].get("login") != actor):
+            raise CoordinationError("Recuperación V3 requiere asignación exclusiva al OWNER.")
     body = issue.get("body")
     if not isinstance(body, str):
         raise CoordinationError("Contrato de Issue sin cuerpo válido.")
