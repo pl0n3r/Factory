@@ -1,0 +1,39 @@
+# Factory #2121 — mapeo de la autonomía operativa
+
+Corte autenticado 26-nov-2026: [main b0252dbaa3a4b3acf8e26516dcbbbbf5e27654d7](https://github.com/pl0n3r/Factory/commit/b0252dbaa3a4b3acf8e26516dcbbbbf5e27654d7), [CI 45822047300](https://github.com/pl0n3r/Factory/actions/runs/45822047300) con Tests de scripts y Validar success. Hoja [#2248](https://github.com/pl0n3r/Factory/issues/2248), [épica #2121](https://github.com/pl0n3r/Factory/issues/2121). Aplicado [factory-epic-splitter](../../claude/factory-claude/skills/factory-epic-splitter/SKILL.md): resultados falsables, reutilización, paths exclusivos y dependencias locales. **No se acredita C1 ni C2; el padre permanece abierto y su cierre corresponde al dueño.** El CI de main es evidencia de código, no de runtime.
+
+## Conciliación de entregables cerrados
+
+Se consultó cada Issue por separado: los once originales están CLOSED/completed. Los informes en main son evidencia documental; no son recibos de autonomía.
+
+| Fase | Hojas cerradas | Evidencia en main |
+| --- | --- | --- |
+| A: arquitectura y diagnóstico | [#2122](https://github.com/pl0n3r/Factory/issues/2122), [#2123](https://github.com/pl0n3r/Factory/issues/2123), [#2124](https://github.com/pl0n3r/Factory/issues/2124), [#2125](https://github.com/pl0n3r/Factory/issues/2125) | [Cadena](../auditoria-autonomia/01-cadena.md), [dispatcher](../auditoria-autonomia/02-dispatcher.md), [ControlBot](../auditoria-autonomia/03-controlbot.md), [runner](../auditoria-autonomia/04-runner.md) |
+| A: herramientas, orquestación y cola | [#2126](https://github.com/pl0n3r/Factory/issues/2126), [#2127](https://github.com/pl0n3r/Factory/issues/2127), [#2137](https://github.com/pl0n3r/Factory/issues/2137), [#2140](https://github.com/pl0n3r/Factory/issues/2140) | [Qwen](../auditoria-autonomia/05-qwen.md), [AutoFactory](../auditoria-autonomia/06-autofactory.md), [orq-local](../auditoria-autonomia/10-orq-local.md), [épicas](../auditoria-autonomia/11-epicas-sin-partir.md) |
+| B: causa raíz | [#2128](https://github.com/pl0n3r/Factory/issues/2128) | [B1](../auditoria-autonomia/07-causa-raiz.md) |
+| C: aceptación auditada, no ejecutada | [#2129](https://github.com/pl0n3r/Factory/issues/2129), [#2130](https://github.com/pl0n3r/Factory/issues/2130) | [C1](../auditoria-autonomia/08-prueba-ciclo.md), [C2](../auditoria-autonomia/09-paralelo.md): NO DEMOSTRADO |
+
+## Fronteras técnicas y hojas ejecutables
+
+| Resultado pendiente | Evidencia y clasificación | Hoja / aceptación y dependencia |
+| --- | --- | --- |
+| Inventario estable de siete repos | PARCIAL. #2220 cerrado; cron de [salud-cola.yml](../../.github/workflows/salud-cola.yml) aún observa solo Factory en el SHA del corte. El job global de publicación es manual y distinto. | [#2221](https://github.com/pl0n3r/Factory/issues/2221), OPEN/reservado: dos barridos GET-only, paginación y drift, identidad, cuota, fixtures ES/EN. Reutilizar, no duplicar ni invadir su V3. |
+| Inventario → decisión del selector | PARCIAL: [#2146](https://github.com/pl0n3r/Factory/issues/2146) / [PR #2149](https://github.com/pl0n3r/Factory/pull/2149) integrado, #2147 cerrado como duplicate. [orquestador.yml](../../.github/workflows/orquestador.yml) recibe JSON sintético mediante workflow_dispatch; [dispatch_inventory.py](../../scripts/dispatch_inventory.py) exige identidad de cada candidato, claims, gates, policy SHA e idempotencia. El censo no acredita estos campos. | Nueva hoja canónica [#2249](https://github.com/pl0n3r/Factory/issues/2249), PLANIFICADA y dependiente de #2221. Adaptador puro, fixtures positivos/negativos y Tests de scripts; solo OFFLINE_PROPOSAL, cero envíos, UNKNOWN ante ausencia, sin habilitar trigger ni READY/NO_WORK. Claims nuevos: scripts/dispatch_observed_inventory.py, tests/test_dispatch_observed_inventory.py, docs/auditoria-autonomia/selector-inventario-offline.md. |
+| Ejecución de herramientas por Qwen real | PARCIAL para harness; ejecución BLOQUEADA/NO DEMOSTRADA. [#2219](https://github.com/pl0n3r/Factory/issues/2219) CLOSED/completed, [PR #2244](https://github.com/pl0n3r/Factory/pull/2244) MERGED (1b774188e5a40300f6c73aee1984d2a9f7d7c21a). [qwen_tool_smoke.py](../../scripts/qwen_tool_smoke.py) mantiene VERIFIED_TOOL_VERSIONS vacío y no ejecuta prompt si inventario de herramientas no auditado. | No repetir harness ni habilitar una versión por inferencia. [Runbook #2067](https://github.com/pl0n3r/Factory/issues/2067), [contrato](../auditoria-autonomia/qwen-tool-smoke.md). El siguiente recibo exige fuente auténtica del CLI, laboratorio autorizado, herramientas efectivas read_file/edit y RED→GREEN real con test intacto. |
+| Entrega real y ACK/recovery de ControlBot → FactoryRunner | PARCIAL para contrato sintético; operación NO DEMOSTRADA. [ControlBot #1516/PR #1517](https://github.com/pl0n3r/ControlBot/pull/1517) acredita persistencia/replay sintéticos según C1; no una orden real. | Dueños de código: ControlBot y FactoryRunner, no Factory. Preservar [ControlBot #625](https://github.com/pl0n3r/ControlBot/issues/625) y [FactoryRunner #465](https://github.com/pl0n3r/FactoryRunner/issues/465), sus autorizaciones y gates; no abrir hojas mutantes cruzadas desde #2248. |
+| Orquestación local / AutoFactory | PARCIAL para referencia y eventos locales históricos, NO DEMOSTRADO como ciclo Qwen autónomo. | Reutilizar A6/A7; D-061 y [AutoFactory #242](https://github.com/pl0n3r/AutoFactory/issues/242) conservan puente OFF. No activar ni sustituir orquestadores. |
+| C1 y C2 operativos | NO DEMOSTRADO. No hay recibo primario nuevo en este corte que correlacione trigger, order_id, runner_id, V3, edición, test, PR/CI, merge y siguiente orden sin intervención. | No reabrir auditorías cerradas. C1 exige una ejecución autorizada completa; C2 exige C1 positivo y cuatro ejecuciones disjuntas, merges seriales, recuperación y cero duplicados. |
+
+La secuencia local del nuevo trabajo es #2221 → #2249; ninguna dependencia abierta se transforma en disponibilidad. Las rutas de #2249 son disjuntas de las de #2221 y #2248; la etiqueta planificado se conserva hasta revisión del contrato final de #2221, validación canónica y nuevo arbitraje V3. No se ejecutó el validador Python local del nuevo cuerpo (red no accesible en el entorno de esta sesión); se contrastaron secciones, markers, AC, clave, claims y dependencia estáticamente, sin declarar el issue listo.
+
+## Pendientes exclusivos de autoridad / evidencia
+
+- Autorizar entorno aislado y fuente efectiva del inventario de herramientas Qwen; no ejecutar prompts reales, ampliar herramientas ni activar versiones no auditadas.
+- Autorizar explícitamente conexión operativa, identidad y transporte ControlBot/FactoryRunner y, cuando corresponda, evidencia de backup/rollback, D-043/D-059, privacidad y D-061. Los permisos de producción, despliegue, credenciales, gasto y live no se derivan del mapeo.
+- Autorizar la prueba real C1 con una hoja elegible y V3 propia; si C1 resulta positiva, autorizar C2 con cuatro agentes y verificar sus recibos completos. Cerrar #2121 solo por decisión del dueño tras ambos resultados. No materializar hojas automáticas para estas decisiones.
+
+## QA, autoridad y reversión de #2248
+
+- AC-01: corte exact-main, estados de las once hojas, #2146/#2147/#2219/#2220/#2221 y código del selector, cron y harness contrastados; fuentes no legibles o sin prueba primaria no se convierten en éxito.
+- AC-02: mapeo anterior, #2249 planificada y puertas humanas explícitas. Tests de scripts y Validar deben acreditarse sobre el HEAD del PR de #2248; no se atribuyen resultados futuros.
+- Alcance documental único bajo V3 de #2248. Sin ejecución de Qwen, acceso al equipo, credenciales, datos reales, despliegue ni activación. Revertir el squash revierte esta página; la hoja planificada y el registro del padre se reconcilian por separado, sin borrar evidencias.
