@@ -100,7 +100,7 @@ class QwenToolSmokeTests(unittest.TestCase):
                 events.append("sandboxed-unittest")
                 return done()
             events.append("model-invoked")
-            if mode == "edit": (root / "module.py").write_text(q.FIXED)
+            if mode in ("edit", "crlf", "profile"): (root / "module.py").write_text(q.FIXED)
             if mode == "crlf": (root / q.TEST_FILE).write_bytes(q.TEST.replace("\n", "\r\n").encode())
             if mode == "profile": profile.write_text("(allow default)")
             if mode == "symlink":
