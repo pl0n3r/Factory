@@ -474,6 +474,159 @@ class BrvtalOrphanLockTests(unittest.TestCase):
         self.assertEqual(LOCK, api.refs["coordinacion/lock-issue-1946"])
 
 
+class BrvtalInterruptedTakeTests(BrvtalOrphanLockTests):
+    """Exact two-ref rollback for a /take interrupted before V3 publication."""
+
+    class PartialApi(BrvtalOrphanLockTests.Api):
+        def __init__(self):
+            super().__init__()
+            self.refs["work/issue-1946"] = PARENT
+            self.issue_data.update(
+                labels=[{"name": coordinator.STATUS_AVAILABLE}],
+                body=(
+                    "### Contexto\nReserva parcial.\n"
+                    "### Alcance\nPrueba offline.\n"
+                    "### Fuera de alcance\nProducción.\n"
+                    "### Criterios de aceptación\n"
+                    "- [ ] [AC-01] validate verde.\n"
+                    "### Contrato ejecutable\n"
+                    '<!-- factory-acceptance {"version":1,"criteria":'
+                    '[{"id":"AC-01","kind":"check","target":"validate"}]} -->\n'
+                    '<!-- factory-plan-task {"version":1,"epic":1,'
+                    '"task_key":"TEST_PARTIAL_TAKE","order":1,"owner":"pl0n3r",'
+                    '"roles":["qa"],"depends_on":[],"paths":["config/example.php"]} -->'
+                ),
+            )
+            self.atomic_calls = []
+            self.ancestry_valid = True
+            self.race_ref = None
+            self.move_main = False
+            self.deny_cas = False
+            self.noop_cas = False
+
+        def request(self, method, path, payload=None, allow=()):
+            if method == "GET" and path == f"/repos/{self.repo}":
+                if self.move_main:
+                    self.refs["main"] = "e" * 40
+                return {"node_id": "repo-id"}
+            if method == "GET" and path == (
+                f"/repos/{self.repo}/compare/{PARENT}...{self.refs['main']}"
+            ):
+                return {
+                    "behind_by": 0 if self.ancestry_valid else 1,
+                    "status": "identical" if self.refs["main"] == PARENT else "ahead",
+                    "base_commit": {"sha": PARENT},
+                    "merge_base_commit": {
+                        "sha": PARENT if self.ancestry_valid else "f"*40,
+                    },
+                }
+            if method == "POST" and path == "/graphql":
+                self.atomic_calls.append(deepcopy(payload))
+                updates = payload["variables"]["input"]["refUpdates"]
+                if self.race_ref:
+                    self.refs[self.race_ref] = "e" * 40
+                if self.deny_cas or any(
+                    self.refs.get(u["name"].removeprefix("refs/heads/")) != u["beforeOid"]
+                    for u in updates
+                ):
+                    return {"errors": [{"message": "CAS rejected"}]}
+                if not self.noop_cas:
+                    for update in updates:
+                        self.assert_deletion(update)
+                        del self.refs[update["name"].removeprefix("refs/heads/")]
+                return {"data": {"updateRefs": {"clientMutationId": None}}}
+            return super().request(method, path, payload, allow)
+
+        @staticmethod
+        def assert_deletion(update):
+            if update["afterOid"] != "0"*40 or update["force"] is not False:
+                raise AssertionError("unexpected ref update")
+
+    def test_partial_take_exact_main_and_advanced_main(self):
+        for main in (PARENT, "d"*40):
+            with self.subTest(main=main):
+                api = self.PartialApi()
+                api.refs["main"] = main
+                before = deepcopy((api.issue_data, api.comments, api.pulls))
+                self.dispatch(api)
+                self.assertEqual({"main": main}, api.refs)
+                self.assertEqual(before, (api.issue_data, api.comments, api.pulls))
+                self.assertEqual([], api.releases)
+                self.assertEqual(1, len(api.atomic_calls))
+                args = api.atomic_calls[0]["variables"]["input"]
+                self.assertEqual("repo-id", args["repositoryId"])
+                self.assertEqual([
+                    {"name": "refs/heads/work/issue-1946", "beforeOid": PARENT,
+                     "afterOid": "0"*40, "force": False},
+                    {"name": "refs/heads/coordinacion/lock-issue-1946", "beforeOid": LOCK,
+                     "afterOid": "0"*40, "force": False},
+                ], args["refUpdates"])
+                with self.assertRaises(coordinator.CoordinationError):
+                    self.dispatch(api)
+
+    def test_partial_take_negative_preflight(self):
+        for name, mutate in (
+            ("branch changed", lambda a: a.refs.update({"work/issue-1946": "e"*40})),
+            ("not ancestor", lambda a: setattr(a, "ancestry_valid", False)),
+            ("main race", lambda a: setattr(a, "move_main", True)),
+            ("assigned", lambda a: a.issue_data.update(assignees=[{"login": "pl0n3r"}])),
+            ("contract missing", lambda a: a.issue_data.update(body="offline")),
+            ("wrong owner", lambda a: a.issue_data.update(
+                body=a.issue_data["body"].replace('"owner":"pl0n3r"', '"owner":"other"'))),
+            ("recent", lambda a: a.record["author"].update(date="2026-10-30T15:30:00Z")),
+            ("signature", lambda a: a.record["verification"].update(verified=False)),
+            ("closed", lambda a: a.issue_data.update(state="closed")),
+            ("blocked", lambda a: a.issue_data.update(
+                labels=[{"name": coordinator.STATUS_BLOCKED}])),
+        ):
+            with self.subTest(name=name):
+                api = self.PartialApi()
+                mutate(api)
+                with self.assertRaises(coordinator.CoordinationError):
+                    self.dispatch(api)
+                self.assertEqual([], api.atomic_calls)
+                self.assertEqual([], api.releases)
+        api = self.PartialApi()
+        with patch.object(coordinator, "active_reservation", return_value={"active": True}):
+            with self.assertRaises(coordinator.CoordinationError):
+                self.dispatch(api)
+        self.assertEqual([], api.atomic_calls)
+
+    def test_partial_take_related_pr_or_atomic_race(self):
+        pull = {"number": 5, "state": "open", "body": f"Closes #{ISSUE}",
+                "head": {"ref": "other", "sha": PARENT,
+                         "repo": {"full_name": "pl0n3r/brvtal"}},
+                "base": {"ref": "main", "sha": "d"*40}}
+        for snapshots in ([ [pull] ], [[], [pull]]):
+            api = self.PartialApi()
+            with patch.object(api, "open_pulls", side_effect=snapshots):
+                with self.assertRaises(coordinator.CoordinationError):
+                    self.dispatch(api)
+            self.assertEqual([], api.atomic_calls)
+        for ref in ("work/issue-1946", "coordinacion/lock-issue-1946"):
+            api = self.PartialApi()
+            api.race_ref = ref
+            with self.assertRaises(coordinator.CoordinationError):
+                self.dispatch(api)
+            self.assertEqual(1, len(api.atomic_calls))
+            self.assertEqual("e"*40, api.refs[ref])
+            other = "coordinacion/lock-issue-1946" if ref.startswith("work/") else "work/issue-1946"
+            self.assertEqual(LOCK if other.startswith("coordinacion/") else PARENT,
+                             api.refs[other])
+            self.assertEqual("d"*40, api.refs["main"])
+
+    def test_partial_take_cas_denied_or_unconfirmed(self):
+        for failure in ("deny_cas", "noop_cas"):
+            api = self.PartialApi()
+            setattr(api, failure, True)
+            before = deepcopy(api.refs)
+            with self.assertRaises(coordinator.CoordinationError):
+                self.dispatch(api)
+            self.assertEqual(before, api.refs)
+            self.assertEqual(1, len(api.atomic_calls))
+            self.assertEqual([], api.releases)
+
+
 # Nueva primitiva offline: no debe asociarse a parse_comment_command.
 class LiveOwnerV3RecoveryTests(unittest.TestCase):
     SESSION = "cbb53f02-a68b-4d1d-b118-4dfc4efea06d"
