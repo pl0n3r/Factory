@@ -62,7 +62,7 @@ def evaluate(before, after, test_before, test_after, files, exit_code, stdout,
             "test_before_sha256": digest(test_before.encode()),
             "test_after_sha256": digest(test_after.encode()),
             "diff": ("".join(difflib.unified_diff(before.splitlines(True), after.splitlines(True), fromfile="module.py:before", tofile="module.py:after")) if before == BROKEN and after == FIXED else ("REDACTED_UNEXPECTED_CHANGE" if before != after else "")),
-            "exit_code": exit_code, "exit_55_budget": exit_code == 55,
+            "exit_code": exit_code, "exit_55_observed": exit_code == 55,
             "initial_red": initial_red, "final_green": final_green,
             "file_inventory_ok": set(files) == EXPECTED, "isolation_verified": isolation_ok,
             "observed_edit_calls": len(calls), "successful_edit_calls": len(calls & results)}
@@ -181,9 +181,9 @@ def run_real(endpoint, model, max_seconds=90):
         test_before = (project / "test_module.py").read_text(encoding="utf8")
         try:
             done = sandboxed(project, profile, argv, env, timeout=max_seconds+8)
-            rc, stdout = done.returncode, done.stdout
+            rc, stdout, stderr = done.returncode, done.stdout, done.stderr or ""
         except (OSError, subprocess.TimeoutExpired):
-            rc, stdout = 124, ""
+            rc, stdout, stderr = 124, "", ""
         children = list(project.iterdir())
         if any(x.is_symlink() for x in children):
             return {"state": "UNKNOWN", "reason": "symlink in fixture; refusing unsandboxed reads"}
@@ -192,6 +192,9 @@ def run_real(endpoint, model, max_seconds=90):
         files = [x.name for x in children]
         green = unittest_green(project, env, profile) if after == FIXED and test_after == TEST and set(files) == EXPECTED else False
         result = evaluate(before, after, test_before, test_after, files, rc, stdout, red, green, True)
+        if rc == 55:
+            result["exit_55_cause"] = ("budget-evidenced" if re.search(r"budget|tool.?call.?limit|turn.?limit", stderr[:2048], re.I) else "unknown")
+            result["stderr_sha256"] = digest(stderr.encode())
         result.update({"runtime": "Qwen Code CLI", "model": model, "endpoint": endpoint,
                        "max_wall_seconds": max_seconds, "max_tool_calls": 4,
                        "tool_evidence_sha256": digest(stdout.encode()),
