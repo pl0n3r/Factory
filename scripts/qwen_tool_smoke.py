@@ -9,25 +9,26 @@ from pathlib import Path
 import re
 from secrets import token_urlsafe
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 from urllib.parse import urlsplit
-
+MODULE_FILE = "module.py"
+TEST_FILE = "test_module.py"
+SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+LOCAL_ENDPOINT = "http://127.0.0.1:11434/v1"
+LOCAL_MODEL = "qwen3:4b"
 BROKEN = "def triple(value):\n    return value * 2\n"
 FIXED = "def triple(value):\n    return value * 3\n"
 TEST = ("import unittest\nfrom module import triple\n\n"
         "class TripleTest(unittest.TestCase):\n"
         "    def test_seven(self):\n"
         "        self.assertEqual(triple(7), 21)\n")
-EXPECTED = {"module.py", "test_module.py"}
+EXPECTED = {MODULE_FILE, TEST_FILE}
 MAX_OUTPUT = 524288
-
-
 def digest(data):
     return hashlib.sha256(data).hexdigest()
-
-
 def evaluate(before, after, test_before, test_after, files, exit_code, stdout,
              initial_red, final_green, isolation_ok, synthetic=False):
     """Never infer a tool call from prose or exit=0 alone."""
@@ -56,7 +57,7 @@ def evaluate(before, after, test_before, test_after, files, exit_code, stdout,
     good = bool(isolation_ok and initial_red and final_green and exit_code == 0 and
                 before == BROKEN and after == FIXED and test_before == test_after == TEST and
                 set(files) == EXPECTED and evidence)
-    return {"state": "FIXTURE_ONLY" if synthetic else ("TOOL_SMOKE_VERIFIED" if good else "FAILED"),
+    return {"state": (("FIXTURE_ONLY" if synthetic else "TOOL_SMOKE_VERIFIED") if good else "FAILED"),
             "accepted": good, "edit_tool_succeeded": evidence,
             "original_sha256": digest(before.encode()), "final_sha256": digest(after.encode()),
             "test_before_sha256": digest(test_before.encode()),
@@ -66,7 +67,6 @@ def evaluate(before, after, test_before, test_after, files, exit_code, stdout,
             "initial_red": initial_red, "final_green": final_green,
             "file_inventory_ok": set(files) == EXPECTED, "isolation_verified": isolation_ok,
             "observed_edit_calls": len(calls), "successful_edit_calls": len(calls & results)}
-
 
 def endpoint_ok(url):
     try:
@@ -78,11 +78,25 @@ def endpoint_ok(url):
         return False
 
 
+def private_lab(root):
+    """Reject symlinks, other owners and non-private parent/lab directories."""
+    if root.name != "lab" or not root.parent.name.startswith("qwen-smoke-"):
+        return False
+    try:
+        entries = (root.lstat(), root.parent.lstat())
+    except OSError:
+        return False
+    return all(stat.S_ISDIR(item.st_mode) and item.st_uid == os.getuid() and
+               stat.S_IMODE(item.st_mode) == 0o700 for item in entries)
+
+
 def seatbelt_profile(root):
-    """Restrictive macOS kernel policy; the process and descendants inherit it."""
+    """Restrictive macOS kernel policy inherited by subprocesses."""
+    if not private_lab(root):
+        raise RuntimeError("lab requires privately owned directories")
     safe = str(root.resolve())
-    if not safe.startswith("/private/tmp/") and not safe.startswith("/tmp/"):
-        raise RuntimeError("lab must be below system temporary directory")
+    if not re.fullmatch(r"[/A-Za-z0-9._-]+", safe):
+        raise RuntimeError("unsafe sandbox path")
     return '\n'.join([
         '(version 1)', '(deny default)',
         '(allow process-fork)', '(allow process-exec)',
@@ -93,13 +107,13 @@ def seatbelt_profile(root):
 
 
 def sandboxed(root, profile, command, env, timeout=10):
-    return subprocess.run(["/usr/bin/sandbox-exec", "-f", str(profile), *command],
+    return subprocess.run([SANDBOX_EXEC, "-f", str(profile), *command],
                           cwd=root, env=env, capture_output=True, text=True,
                           timeout=timeout, check=False)
 
 
 def verify_isolation(root, profile, env):
-    if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file():
+    if sys.platform != "darwin" or not Path(SANDBOX_EXEC).is_file():
         return False
     witness = root.parent / "witness"
     witness.write_text("do not touch", encoding="utf8")
@@ -136,22 +150,22 @@ def unittest_green(folder, env, profile=None):
 
 
 def run_real(endpoint, model, max_seconds=90):
-    if not endpoint_ok(endpoint) or not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,80}", model):
+    if endpoint != LOCAL_ENDPOINT or model != LOCAL_MODEL:
         return {"state": "UNKNOWN", "reason": "invalid local endpoint or model"}
-    if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file():
+    if sys.platform != "darwin" or not Path(SANDBOX_EXEC).is_file():
         return {"state": "UNKNOWN", "reason": "kernel sandbox not available; no CLI invoked"}
     qwen = shutil.which("qwen")
     if not qwen or not Path(qwen).is_absolute():
         return {"state": "UNKNOWN", "reason": "installed Qwen CLI not found"}
-    with tempfile.TemporaryDirectory(prefix="qwen-smoke-", dir="/private/tmp") as td:
-        root = Path(td, "lab").resolve()
+    with tempfile.TemporaryDirectory(prefix="qwen-smoke-") as td:
+        root = Path(td, "lab")
         root.mkdir(mode=0o700)
-        if root.is_symlink():
+        if not private_lab(root):
             return {"state": "UNKNOWN", "reason": "unsafe sandbox root"}
         project, home = root / "project", root / "home"
         project.mkdir(mode=0o700); home.mkdir(mode=0o700)
-        (project / "module.py").write_text(BROKEN, encoding="utf8")
-        (project / "test_module.py").write_text(TEST, encoding="utf8")
+        (project / MODULE_FILE).write_text(BROKEN, encoding="utf8")
+        (project / TEST_FILE).write_text(TEST, encoding="utf8")
         profile = root / "profile.sb"
         profile.write_text(seatbelt_profile(root), encoding="utf8")
         env = {"HOME": str(home), "QWEN_HOME": str(home / ".qwen"),
@@ -171,14 +185,14 @@ def run_real(endpoint, model, max_seconds=90):
             return {"state": "UNKNOWN", "reason": "CLI flags/version unverified inside sandbox"}
         version_match = re.search(r"\b\d+\.\d+\.\d+\b", about.stdout[:256])
         version = version_match.group(0) if version_match else "UNKNOWN"
-        argv = [qwen, "--bare", "--auth-type", "openai", "--openai-base-url", endpoint,
-                "--openai-api-key", token_urlsafe(16), "--model", model,
+        argv = [qwen, "--bare", "--auth-type", "openai", "--openai-base-url", LOCAL_ENDPOINT,
+                "--openai-api-key", token_urlsafe(16), "--model", LOCAL_MODEL,
                 "--approval-mode", "auto-edit", "--core-tools", "read_file,edit",
                 "--max-tool-calls", "4", "--max-session-turns", "12",
                 "--max-wall-time", str(max_seconds), "--output-format", "stream-json",
                 "-p", "Read module.py, fix triple so triple(7)==21 by editing module.py. Do not edit test_module.py or any other file."]
-        before = (project / "module.py").read_text(encoding="utf8")
-        test_before = (project / "test_module.py").read_text(encoding="utf8")
+        before = (project / MODULE_FILE).read_text(encoding="utf8")
+        test_before = (project / TEST_FILE).read_text(encoding="utf8")
         try:
             done = sandboxed(project, profile, argv, env, timeout=max_seconds+8)
             rc, stdout, stderr = done.returncode, done.stdout, done.stderr or ""
@@ -187,8 +201,8 @@ def run_real(endpoint, model, max_seconds=90):
         children = list(project.iterdir())
         if any(x.is_symlink() for x in children):
             return {"state": "UNKNOWN", "reason": "symlink in fixture; refusing unsandboxed reads"}
-        after = (project / "module.py").read_text(encoding="utf8") if (project / "module.py").is_file() else ""
-        test_after = (project / "test_module.py").read_text(encoding="utf8") if (project / "test_module.py").is_file() else ""
+        after = (project / MODULE_FILE).read_text(encoding="utf8") if (project / MODULE_FILE).is_file() else ""
+        test_after = (project / TEST_FILE).read_text(encoding="utf8") if (project / TEST_FILE).is_file() else ""
         files = [x.name for x in children]
         green = unittest_green(project, env, profile) if after == FIXED and test_after == TEST and set(files) == EXPECTED else False
         result = evaluate(before, after, test_before, test_after, files, rc, stdout, red, green, True)
@@ -205,10 +219,8 @@ def run_real(endpoint, model, max_seconds=90):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run", action="store_true", help="opt-in Mac sandbox smoke; never run in CI")
-    ap.add_argument("--endpoint", default="http://127.0.0.1:11434/v1")
-    ap.add_argument("--model", default="qwen3:4b")
     args = ap.parse_args()
-    result = run_real(args.endpoint, args.model) if args.run else {"state": "UNKNOWN", "reason": "opt-in --run required"}
+    result = run_real(LOCAL_ENDPOINT, LOCAL_MODEL) if args.run else {"state": "UNKNOWN", "reason": "opt-in --run required"}
     print(json.dumps(result, sort_keys=True, ensure_ascii=False))
     return 0 if result["state"] == "TOOL_SMOKE_VERIFIED" else 1
 
