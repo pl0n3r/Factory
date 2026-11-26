@@ -49,7 +49,15 @@ CANONICAL_CI_GATES = {
 # Ampliar el mapa exige verificar que workflow_dispatch ejecuta gates reales.
 POST_MERGE_CI = {
     "pl0n3r/grindflow": ("grindflow-ci.yml", "GrindFlow CI", "validate"),
+    "pl0n3r/autofactory": ("validate.yml", "Validate", "Validate / Pruebas y smoke Chrome"),
 }
+
+# El Validate nativo de AutoFactory admite 20 min. Antes del squash
+# irreversible se exigen además 2 min para dispatch, identidad y recibo.
+# Los jobs actuales de reconciliación duran 20 min: en este consumidor
+# se aplaza el squash hasta que un caller autorizado acredite >=22 min.
+POST_MERGE_MIN_RECONCILE_SECONDS = {"pl0n3r/autofactory": 22 * 60}
+POST_MERGE_MAX_ATTEMPTS = {"pl0n3r/autofactory": 126}
 
 
 # Sweep dura 20 min; usar ventana soft de 18 min y reservar al menos
@@ -445,14 +453,20 @@ def create_followup(repo: str, number: int, head: str, token: str, *, reason: st
         + " -->\n"
     )
     if reason == "postmerge":
+        # La identidad proviene solo del mapa cerrado, no de metadatos del PR.
+        postmerge_target = POST_MERGE_CI.get(repo.casefold())
+        if postmerge_target is None:
+            raise LaneError("Seguimiento posfusión para consumidor no autorizado")
+        workflow_name, run_name, required_job = postmerge_target
         # El issue se puede reabrir/revalidar sin intentar un segundo merge.
-        body = body.replace('"target":"Validar"', '"target":"validate"')
+        body = body.replace('"target":"Validar"',
+                            '"target":' + json.dumps(required_job, ensure_ascii=False))
         body += (
             f"\n### Recuperación posfusión (sin nuevo squash)\n"
             f"SHA fusionado: {merge_sha}\nCausa sanitizada: {failure}\n"
             "Verificar main contra SHA fusionado. Con identidad exacta, "
-            "despachar GrindFlow CI mediante workflow_dispatch y acreditar "
-            "run y job validate terminales del mismo SHA antes de cerrar. "
+            f"despachar {run_name} ({workflow_name}) mediante workflow_dispatch "
+            f"y acreditar run y job {required_job} terminales del mismo SHA antes de cerrar. "
             "Si main avanzó, mantener bloqueo y no atribuir CI ajeno. "
             "Nunca volver a fusionar el PR.\n"
         )
@@ -566,7 +580,8 @@ def _postmerge_exact_main_ci(repo: str, merged_sha: str, token: str) -> dict:
 
     # El dispatch REST no devuelve run_id. Correlacionar por ID nuevo,
     # workflow permitido, SHA exacto y ausencia de concurrencia ambigua.
-    for attempt in range(90):
+    max_attempts = POST_MERGE_MAX_ATTEMPTS.get(repo.casefold(), 90)
+    for attempt in range(max_attempts):
         require_main()
         created = [run for run in inventory() if run["id"] > baseline]
         if len(created) > 1:
@@ -620,7 +635,7 @@ def _postmerge_exact_main_ci(repo: str, merged_sha: str, token: str) -> dict:
                 require_main()
                 return {"run_id": run["id"], "head_sha": merged_sha,
                         "validate": "success"}
-        if attempt < 89:
+        if attempt < max_attempts - 1:
             time.sleep(10)
     raise LaneError("CI post-merge sin run terminal dentro del presupuesto")
 
@@ -672,14 +687,21 @@ def reconcile(repo: str, number: int, head: str, token: str, *, now: datetime, j
             raise LaneError("Evidencia de PR/checks cambió antes de auto-merge")
         if not _switch_running(repo, token):
             raise LaneError("Interruptor global cambió antes del squash")
-        # Cada squash de un sweep necesita la ventana completa de CI posfusión.
-        if job_deadline is not None:
-            if type(job_deadline) not in (int, float):
-                raise LaneError("Deadline del barrido inválido")
-            if job_deadline - time.monotonic() < SWEEP_MIN_RECONCILE_SECONDS:
-                return {**result, "auto_merge_enabled": False,
-                        "followup_required": False,
-                        "deferred": "insufficient_job_budget"}
+        # Nunca hacer squash si el job no cubre el timeout máximo nativo
+        # más la correlación del recibo. El caller directo sin deadline
+        # verificable no puede admitir AutoFactory, aunque GrindFlow conserva
+        # su presupuesto histórico.
+        extra_budget = POST_MERGE_MIN_RECONCILE_SECONDS.get(repo.casefold())
+        if job_deadline is not None and type(job_deadline) not in (int, float):
+            raise LaneError("Deadline del barrido inválido")
+        if (extra_budget is not None and job_deadline is None) or (
+            job_deadline is not None and
+            job_deadline - time.monotonic() < max(
+                SWEEP_MIN_RECONCILE_SECONDS, extra_budget or 0)
+        ):
+            return {**result, "auto_merge_enabled": False,
+                    "followup_required": False,
+                    "deferred": "insufficient_job_budget"}
         # El workflow_run se dispara tras finalizar los checks: habilitar
         # GitHub auto-merge en un PR ya mergeable puede fallar (no hay
         # requisitos pendientes). Ejecutar el squash normal con expected SHA,
