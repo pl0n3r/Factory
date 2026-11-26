@@ -5903,25 +5903,41 @@ def recover_orphaned_issue_lock(
     if api.branch_sha(lock_name) != expected_sha:
         raise CoordinationError("Lock ausente o cambiado: no hay propiedad del token.")
     issue = api.issue(issue_number)
+    work_branch = branch_for_issue(issue_number)
+    initial_work_sha = api.branch_sha(work_branch) if brvtal else None
+    interrupted_take = (brvtal and initial_work_sha is not None
+                        and _canonical_status_is(issue, STATUS_AVAILABLE))
     if (issue.get("state") != "open" or "pull_request" in issue
-            or STATUS_BLOCKED not in label_names(issue)
+            or (not interrupted_take and STATUS_BLOCKED not in label_names(issue))
             or active_reservation(api, issue_number) is not None):
         raise CoordinationError("Issue con autoridad activa o estado incompatible.")
-    def require_brvtal_terminal(candidate: dict[str, Any]) -> None:
-        # This consumer repair is deliberately narrower: no work branch,
-        # assigned owner or related open PR may survive without a lease.
-        if (label_names(candidate).intersection(STATUS_LABELS) != {STATUS_BLOCKED}
+
+    def require_brvtal_repair_state(candidate: dict[str, Any]) -> None:
+        expected_status = STATUS_AVAILABLE if interrupted_take else STATUS_BLOCKED
+        expected_work = initial_work_sha if interrupted_take else None
+        if (not _canonical_status_is(candidate, expected_status)
                 or candidate.get("assignees") != []
-                or api.branch_sha(branch_for_issue(issue_number)) is not None):
-            raise CoordinationError("BRVTAL: estado terminal sin trabajo no acreditado.")
+                or api.branch_sha(work_branch) != expected_work):
+            raise CoordinationError("BRVTAL: estado sin trabajo no acreditado.")
+        if interrupted_take:
+            # A failed /take may create the branch before publishing the V3.
+            # The new lane must still have a canonical, owner-bound contract.
+            body = candidate.get("body")
+            try:
+                parse_contract(body)
+                task = parse_task_marker(body)
+            except (AcceptanceError, PlanError, ValueError, TypeError) as exc:
+                raise CoordinationError("BRVTAL: contrato de reserva inválido.") from exc
+            if task is None or task.get("owner") != actor:
+                raise CoordinationError("BRVTAL: contrato sin titular autorizado.")
         snapshot = orphan_adoption_pull_snapshot(api.open_pulls())
-        if any(record[3] == branch_for_issue(issue_number)
+        if any(record[3] == work_branch
                or issue_number in closing_issues(record[2] or "")
                for record in snapshot):
             raise CoordinationError("BRVTAL: existe PR abierto relacionado.")
 
     if brvtal:
-        require_brvtal_terminal(issue)
+        require_brvtal_repair_state(issue)
     commit = api.request("GET", f"/repos/{api.repo}/git/commits/{expected_sha}")
     if not isinstance(commit, dict) or commit.get("sha") != expected_sha:
         raise CoordinationError("Commit de lock no autenticado.")
@@ -5987,14 +6003,67 @@ def recover_orphaned_issue_lock(
                 or ancestry.get("behind_by") != 0
                 or ancestry.get("status") not in ("ahead", "identical")):
             raise CoordinationError("Parent del lock ya no pertenece a main.")
+    if interrupted_take:
+        # Both refs must be redundant: the work SHA is the signed lock parent
+        # and that exact commit remains reachable from protected main.
+        if work_sha != initial_work_sha or work_sha != parent:
+            raise CoordinationError("BRVTAL: rama parcial cambió desde el lock.")
+        main_sha = api.branch_sha("main")
+        if not isinstance(main_sha, str) or SHA_RE.fullmatch(main_sha) is None:
+            raise CoordinationError("BRVTAL: main no verificable.")
+        ancestry = api.request(
+            "GET", f"/repos/{api.repo}/compare/{parent}...{main_sha}"
+        )
+        if (not isinstance(ancestry, dict)
+                or type(ancestry.get("behind_by")) is not int
+                or ancestry["behind_by"] != 0
+                or ancestry.get("status") != ("identical" if parent == main_sha else "ahead")
+                or not isinstance(ancestry.get("base_commit"), dict)
+                or ancestry["base_commit"].get("sha") != parent
+                or not isinstance(ancestry.get("merge_base_commit"), dict)
+                or ancestry["merge_base_commit"].get("sha") != parent):
+            raise CoordinationError("BRVTAL: rama parcial no alcanzable desde main.")
+        repository = api.request("GET", f"/repos/{api.repo}")
+        repo_id = repository.get("node_id") if isinstance(repository, dict) else None
+        if not isinstance(repo_id, str) or not repo_id:
+            raise CoordinationError("BRVTAL: identidad de repo CAS ilegible.")
+
     require_global_running(api)
     if (api.branch_sha(lock_name) != expected_sha
             or active_reservation(api, issue_number) is not None
             or api.issue(issue_number) != issue
-            or api.branch_sha(branch_for_issue(issue_number)) != work_sha):
+            or api.branch_sha(work_branch) != work_sha):
         raise CoordinationError("Estado cambió antes de liberar el lock.")
     if brvtal:
-        require_brvtal_terminal(issue)
+        require_brvtal_repair_state(issue)
+    if interrupted_take:
+        if api.branch_sha("main") != main_sha:
+            raise CoordinationError("BRVTAL: main cambió antes de recuperar.")
+        require_global_running(api)
+        # updateRefs is atomic across both refs. Exact beforeOid on each
+        # prevents a stale recovery from deleting a successor or new work.
+        # No protected main update, force push, or sequential delete fallback.
+        response = api.request("POST", "/graphql", {
+            "query": ("mutation($input:UpdateRefsInput!){"
+                      "updateRefs(input:$input){clientMutationId}}"),
+            "variables": {"input": {
+                "repositoryId": repo_id,
+                "refUpdates": [
+                    {"name": f"refs/heads/{work_branch}", "beforeOid": work_sha,
+                     "afterOid": "0" * 40, "force": False},
+                    {"name": f"refs/heads/{lock_name}", "beforeOid": expected_sha,
+                     "afterOid": "0" * 40, "force": False},
+                ],
+            }},
+        })
+        if (not isinstance(response, dict) or response.get("errors")
+                or not isinstance(response.get("data"), dict)
+                or not isinstance(response["data"].get("updateRefs"), dict)):
+            raise CoordinationError("BRVTAL: CAS de reserva parcial denegado.")
+        if api.branch_sha(work_branch) is not None or api.branch_sha(lock_name) is not None:
+            raise CoordinationError("BRVTAL: CAS parcial sin confirmación de ambas refs.")
+        print(f"Reserva parcial de Issue #{issue_number}: ambas refs redundantes liberadas.")
+        return True
     # Existing GraphQL updateRefs(beforeOid=expected_sha, afterOid=zero).
     # It must reject races rather than silently releasing another token.
     api.release_issue_lock(issue_number, expected_sha)
