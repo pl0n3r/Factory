@@ -107,63 +107,52 @@ class QwenToolSmokeTests(unittest.TestCase):
 
 
     def test_real_cli_path_isolated_and_fail_closed_without_edits(self):
-        real_temp = tempfile.TemporaryDirectory
-
-        class Completed:
-            def __init__(self, code=0, stdout=""):
-                self.returncode, self.stdout = code, stdout
-
-        def temp_factory(**_):
-            return real_temp(prefix="qwen-test-", dir="/tmp")
-
-        seen = []
+        original_temp = tempfile.TemporaryDirectory
+        class Done:
+            def __init__(self, stdout=""):
+                self.returncode, self.stdout = 0, stdout
+        events = []
         def cli(root, profile, command, env, timeout=10):
-            if "--version" in command:
-                return Completed(stdout="qwen 0.26.9")
-            if "--help" in command:
-                return Completed(stdout="--core-tools --max-wall-time")
+            if "--version" in command: return Done("qwen 0.26.9")
+            if "--help" in command: return Done("--core-tools --max-wall-time")
             if "unittest" in command:
-                seen.append("sandboxed-unittest")
-                return Completed()
-            if mode == "edit":
-                (root / "module.py").write_text(q.FIXED)
-            elif mode == "symlink":
+                events.append("sandboxed-unittest")
+                return Done()
+            if mode == "edit": (root / "module.py").write_text(q.FIXED)
+            if mode == "symlink":
                 (root / "module.py").unlink()
                 (root / "module.py").symlink_to(root / "test_module.py")
-            return Completed(stdout=receipt())
-
+            return Done(receipt())
         for mode in ("edit", "no-edit", "symlink"):
-            seen.clear()
+            events.clear()
             with self.subTest(mode=mode), patch.object(q.sys, "platform", "darwin"), \
                  patch.object(q.Path, "is_file", return_value=True), \
                  patch.object(q.shutil, "which", return_value="/usr/bin/qwen"), \
-                 patch.object(q.tempfile, "TemporaryDirectory", side_effect=temp_factory), \
+                 patch.object(q.tempfile, "TemporaryDirectory", side_effect=lambda **_: original_temp(prefix="qwen-test-", dir="/tmp")), \
                  patch.object(q, "verify_isolation", return_value=True), \
                  patch.object(q, "sandboxed", side_effect=cli):
                 result = q.run_real("http://127.0.0.1:11434/v1", "qwen3:4b")
             self.assertEqual(result["state"], {"edit": "TOOL_SMOKE_VERIFIED", "no-edit": "FAILED", "symlink": "UNKNOWN"}[mode])
             self.assertEqual(result.get("accepted", False), mode == "edit")
-            self.assertEqual("sandboxed-unittest" in seen, mode != "symlink")
+            self.assertEqual("sandboxed-unittest" in events, mode != "symlink")
 
     def test_isolation_witness_requires_successful_kernel_probe(self):
-        class Completed:
-            returncode = 0
-
+        class Done: returncode = 0
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "lab"
             root.mkdir()
             profile = root / "profile.sb"
             profile.write_text(q.seatbelt_profile(root))
-            def safe_probe(*args, **kwargs):
+            def safe(*args, **kwargs):
                 (root / "inside").write_text("yes")
-                return Completed()
+                return Done()
             with patch.object(q.sys, "platform", "darwin"), \
                  patch.object(q.Path, "is_file", return_value=True), \
-                 patch.object(q, "sandboxed", side_effect=safe_probe):
+                 patch.object(q, "sandboxed", side_effect=safe):
                 self.assertTrue(q.verify_isolation(root, profile, {}))
             with patch.object(q.sys, "platform", "darwin"), \
                  patch.object(q.Path, "is_file", return_value=True), \
-                 patch.object(q, "sandboxed", return_value=Completed()):
+                 patch.object(q, "sandboxed", return_value=Done()):
                 self.assertFalse(q.verify_isolation(root, profile, {}))
 
 
