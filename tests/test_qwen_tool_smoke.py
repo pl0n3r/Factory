@@ -106,5 +106,57 @@ class QwenToolSmokeTests(unittest.TestCase):
             self.assertEqual(witness.read_text(), "untouched")
 
 
+    def test_real_cli_path_isolated_and_fail_closed_without_edits(self):
+        real_temp = tempfile.TemporaryDirectory
+
+        class Completed:
+            def __init__(self, code=0, stdout=""):
+                self.returncode, self.stdout = code, stdout
+
+        def temp_factory(**_):
+            return real_temp(prefix="qwen-test-", dir="/tmp")
+
+        def cli(root, profile, command, env, timeout=10):
+            if "--version" in command:
+                return Completed(stdout="qwen 0.26.9")
+            if "--help" in command:
+                return Completed(stdout="--core-tools --max-wall-time")
+            if mode == "edit":
+                (root / "module.py").write_text(q.FIXED)
+            return Completed(stdout=receipt())
+
+        for mode in ("edit", "no-edit"):
+            with self.subTest(mode=mode), patch.object(q.sys, "platform", "darwin"), \
+                 patch.object(q.Path, "is_file", return_value=True), \
+                 patch.object(q.shutil, "which", return_value="/usr/bin/qwen"), \
+                 patch.object(q.tempfile, "TemporaryDirectory", side_effect=temp_factory), \
+                 patch.object(q, "verify_isolation", return_value=True), \
+                 patch.object(q, "sandboxed", side_effect=cli):
+                result = q.run_real("http://127.0.0.1:11434/v1", "qwen3:4b")
+            self.assertEqual(result["state"], "TOOL_SMOKE_VERIFIED" if mode == "edit" else "FAILED")
+            self.assertEqual(result["accepted"], mode == "edit")
+
+    def test_isolation_witness_requires_successful_kernel_probe(self):
+        class Completed:
+            returncode = 0
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "lab"
+            root.mkdir()
+            profile = root / "profile.sb"
+            profile.write_text(q.seatbelt_profile(root))
+            def safe_probe(*args, **kwargs):
+                (root / "inside").write_text("yes")
+                return Completed()
+            with patch.object(q.sys, "platform", "darwin"), \
+                 patch.object(q.Path, "is_file", return_value=True), \
+                 patch.object(q, "sandboxed", side_effect=safe_probe):
+                self.assertTrue(q.verify_isolation(root, profile, {}))
+            with patch.object(q.sys, "platform", "darwin"), \
+                 patch.object(q.Path, "is_file", return_value=True), \
+                 patch.object(q, "sandboxed", return_value=Completed()):
+                self.assertFalse(q.verify_isolation(root, profile, {}))
+
+
 if __name__ == "__main__":
     unittest.main()
