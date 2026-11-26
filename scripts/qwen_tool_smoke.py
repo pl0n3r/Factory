@@ -126,9 +126,12 @@ def verify_isolation(root, profile, env):
         (root / "inside").unlink(missing_ok=True)
 
 
-def unittest_green(folder, env):
-    p = subprocess.run([sys.executable, "-m", "unittest", "-q", "test_module"],
-                       cwd=folder, env=env, capture_output=True, timeout=10)
+def unittest_green(folder, env, profile=None):
+    command = [sys.executable, "-m", "unittest", "-q", "test_module"]
+    if profile is not None:
+        p = sandboxed(folder, profile, command, env)
+    else:
+        p = subprocess.run(command, cwd=folder, env=env, capture_output=True, timeout=10)
     return p.returncode == 0
 
 
@@ -181,12 +184,13 @@ def run_real(endpoint, model, max_seconds=90):
             rc, stdout = done.returncode, done.stdout
         except (OSError, subprocess.TimeoutExpired):
             rc, stdout = 124, ""
+        children = list(project.iterdir())
+        if any(x.is_symlink() for x in children):
+            return {"state": "UNKNOWN", "reason": "symlink in fixture; refusing unsandboxed reads"}
         after = (project / "module.py").read_text(encoding="utf8") if (project / "module.py").is_file() else ""
         test_after = (project / "test_module.py").read_text(encoding="utf8") if (project / "test_module.py").is_file() else ""
-        files = [x.name for x in project.iterdir()]
-        if any(x.is_symlink() for x in project.iterdir()):
-            files.append("__unsafe_symlink__")
-        green = unittest_green(project, env) if test_after == TEST else False
+        files = [x.name for x in children]
+        green = unittest_green(project, env, profile) if test_after == TEST else False
         result = evaluate(before, after, test_before, test_after, files, rc, stdout, red, green, True)
         result.update({"runtime": "Qwen Code CLI", "model": model, "endpoint": endpoint,
                        "max_wall_seconds": max_seconds, "max_tool_calls": 4,
