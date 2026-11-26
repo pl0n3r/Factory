@@ -7467,5 +7467,48 @@ class OrphanAdoptionENTests(unittest.TestCase):
         self.assert_untouched()
 
 
+
+class OpenIssuesInventoryShiftTests(unittest.TestCase):
+    """Filas que se corren entre páginas se releen; nunca se aceptan duplicados."""
+
+    @staticmethod
+    def _rows(numbers):
+        return [{"number": n, "state": "open"} for n in numbers]
+
+    def _api(self, scans):
+        api = GitHub("pl0n3r/brvtal", "fake-token")
+        calls = []
+
+        def serve(method, path):
+            calls.append(path)
+            scan = scans[min(len([c for c in calls if c.endswith("&page=1")]), len(scans)) - 1]
+            return scan[int(path.rsplit("page=", 1)[1]) - 1]
+        api.request = serve
+        return api, calls
+
+    def test_duplicate_between_pages_rescans(self) -> None:
+        shifted = [self._rows(range(1, 101)), self._rows(range(100, 131))]
+        stable = [self._rows(range(1, 101)), self._rows(range(101, 131))]
+        api, calls = self._api([shifted, stable])
+        rows = api.open_issues()
+        self.assertEqual([r["number"] for r in rows], list(range(1, 131)))
+        self.assertEqual(sum(1 for c in calls if c.endswith("&page=1")), 2)
+        self.assertTrue(all("sort=created&direction=asc" in c for c in calls))
+
+    def test_persistent_shift_fails_closed(self) -> None:
+        shifted = [self._rows(range(1, 101)), self._rows(range(100, 131))]
+        api, calls = self._api([shifted])
+        with self.assertRaisesRegex(
+            CoordinationError, "ID duplicado o inválido en página 2"
+        ):
+            api.open_issues()
+        self.assertEqual(sum(1 for c in calls if c.endswith("&page=1")), 3)
+
+    def test_invalid_id_fails_without_rescan(self) -> None:
+        api, calls = self._api([[[{"number": 0, "state": "open"}]]])
+        with self.assertRaisesRegex(CoordinationError, "ID duplicado o inválido"):
+            api.open_issues()
+        self.assertEqual(len(calls), 1)
+
 if __name__ == "__main__":
     unittest.main()
