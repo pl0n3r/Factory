@@ -1,5 +1,9 @@
 """Fixtures REST sintéticos: ningún acceso a GitHub ni publicación."""
 import io
+import os
+import tempfile
+from contextlib import redirect_stdout
+from unittest.mock import patch
 import json
 import unittest
 from email.message import Message
@@ -8,7 +12,7 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 
 from scripts.salud_cola_global_observar import (
-    GitHubReader, NoRedirect, ObservationError, REPOSITORIES, ROOT, observe,
+    GitHubReader, NoRedirect, ObservationError, REPOSITORIES, ROOT, main, observe,
 )
 
 SHA = "a" * 40
@@ -129,6 +133,27 @@ class GlobalQueueObserverTests(unittest.TestCase):
         result = observe(GitHubReader("fixture-token", opener=Fixture(),
                                       clock=lambda: next(ticks)), SHA)
         self.assertEqual(result["reason"], "window_expired")
+
+    def test_cli_sanitized_summary_and_missing_authority(self):
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "other/repo"}, clear=True):
+            self.assertEqual(main(), 2)
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary.md"
+            env = {"GITHUB_REPOSITORY": "pl0n3r/Factory", "GITHUB_SHA": SHA,
+                   "GITHUB_STEP_SUMMARY": str(summary)}
+            with patch.dict(os.environ, env, clear=True), redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(main(), 2)
+                result = json.loads(output.getvalue())
+                self.assertEqual(result["status"], "UNKNOWN")
+                self.assertIsNone(result["counts"])
+            with patch.dict(os.environ, {**env, "GITHUB_TOKEN": "fixture-token"}, clear=True), redirect_stdout(io.StringIO()) as output:
+                with patch("scripts.salud_cola_global_observar.build_opener", return_value=Fixture()):
+                    self.assertEqual(main(), 0)
+                result = json.loads(output.getvalue())
+                self.assertEqual(result["status"], "OBSERVED_GLOBAL_ONLY")
+                self.assertEqual(result["policy_sha"], SHA)
+            self.assertIn("OBSERVED_GLOBAL_ONLY", summary.read_text())
+            self.assertNotIn("fixture-token", summary.read_text())
 
 
 if __name__ == "__main__":
