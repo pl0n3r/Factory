@@ -709,6 +709,30 @@ class GitHub:
             raise CoordinationError("CI compuesto: blob de archivo ilegible.")
         return payload["sha"]
 
+    def canonical_branch_issue_numbers(self) -> set[int]:
+        """Números de Issue con rama canónica (el candado atómico de toda lease V3).
+
+        Una sola lectura de refs reemplaza leer los comentarios de cada Issue
+        abierto: sin rama canónica no puede existir una lease activa.
+        """
+        prefix = PROFILE.branch_prefix
+        payload = self.request(
+            "GET",
+            f"/repos/{self.repo}/git/matching-refs/heads/{quote(prefix, safe='/')}",
+        )
+        if not isinstance(payload, list):
+            raise CoordinationError("Inventario de ramas canónicas ilegible.")
+        head = "refs/heads/" + prefix
+        numbers: set[int] = set()
+        for row in payload:
+            ref = row.get("ref") if isinstance(row, dict) else None
+            if not isinstance(ref, str) or not ref.startswith(head):
+                raise CoordinationError("Inventario de ramas canónicas ilegible.")
+            tail = ref[len(head):]
+            if tail.isdigit() and not tail.startswith("0"):
+                numbers.add(int(tail))
+        return numbers
+
     def open_issues(self) -> list[dict[str, Any]]:
         """Inventario REST estricto: jamás tratar un prefijo como completo.
 
@@ -2162,6 +2186,32 @@ def active_reservation(api: GitHub, issue_number: int) -> dict[str, Any] | None:
         return None
     return reservation
 
+
+def lease_scan_numbers(api: Any, issues: list[dict[str, Any]]) -> set[int] | None:
+    """Issues cuya lease V3 hay que leer; None = leerlas todas.
+
+    Toda lease activa nace con su rama canónica (candado atómico) y la rama
+    solo se borra al liberar. Se leen las leases de los Issues con rama
+    canónica más los marcados reservado/en revisión/recuperación. Si el
+    inventario de ramas no se puede leer, se vuelve a la lectura completa.
+    """
+    lister = getattr(api, "canonical_branch_issue_numbers", None)
+    if not callable(lister):
+        return None
+    try:
+        with_branch = lister()
+    except (CoordinationError, GitHubError):
+        return None
+    if not isinstance(with_branch, set):
+        return None
+    flagged = {STATUS_RESERVED, STATUS_REVIEW, STATUS_RECOVERY}
+    scan: set[int] = set(with_branch)
+    for issue in issues:
+        number = issue.get("number") if isinstance(issue, dict) else None
+        if type(number) is int and flagged & label_names(issue):
+            scan.add(number)
+    return scan
+
 def local_pull_source_matches(
     api: GitHub,
     pull: dict[str, Any],
@@ -3152,11 +3202,14 @@ def plan_atomic_compose_v3(
     all_issues = api.open_issues()
     if not isinstance(all_issues, list) or len(all_issues) > MAX_OPEN_ISSUES_V3:
         raise CoordinationError("Composición V3: inventario de Issues inválido.")
+    compose_scan = lease_scan_numbers(api, all_issues)
     for candidate in all_issues:
         other = candidate.get("number")
         if type(other) is not int:
             raise CoordinationError("Composición V3: issue del inventario inválido.")
         if other in issue_numbers:
+            continue
+        if compose_scan is not None and other not in compose_scan:
             continue
         lease = active_reservation(api, other)
         if lease is None:
@@ -3858,12 +3911,15 @@ def prepare_reservation_arbitration(
             active_reservation_numbers = set()
             # La autoridad la da el marker confiable V3, NO el label.
             # Incluir también leases activas escondidas por AVAILABLE/BLOCKED.
+            lease_scan = lease_scan_numbers(api, open_issues)
             for other in open_issues:
                 other_number = other.get("number")
                 if (
                     not isinstance(other_number, int)
                     or other_number == issue_number
                 ):
+                    continue
+                if lease_scan is not None and other_number not in lease_scan:
                     continue
                 other_reservation = active_reservation(api, other_number)
                 if other_reservation is None:
@@ -3966,9 +4022,12 @@ def prepare_reservation_arbitration(
         # Un único barrido conserva el snapshot completo de identidad de las
         # reservas sin multiplicar GET de comentarios de leases activas.
         current_reservations = {}
+        fresh_scan = lease_scan_numbers(api, fresh_issues)
         for other in fresh_issues:
             other_number = other.get("number")
             if not isinstance(other_number, int) or other_number == issue_number:
+                continue
+            if fresh_scan is not None and other_number not in fresh_scan:
                 continue
             snapshot = active_reservation(api, other_number)
             if snapshot is not None:
