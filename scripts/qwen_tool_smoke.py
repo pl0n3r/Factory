@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+from secrets import token_urlsafe
 import shutil
 import subprocess
 import sys
@@ -168,7 +169,7 @@ def run_real(endpoint, model, max_seconds=90):
         version_match = re.search(r"\b\d+\.\d+\.\d+\b", about.stdout[:256])
         version = version_match.group(0) if version_match else "UNKNOWN"
         argv = [qwen, "--bare", "--auth-type", "openai", "--openai-base-url", endpoint,
-                "--openai-api-key", "ollama", "--model", model,
+                "--openai-api-key", token_urlsafe(16), "--model", model,
                 "--approval-mode", "auto-edit", "--core-tools", "read_file,edit",
                 "--max-tool-calls", "4", "--max-session-turns", "12",
                 "--max-wall-time", str(max_seconds), "--output-format", "stream-json",
