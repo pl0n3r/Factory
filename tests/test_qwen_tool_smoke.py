@@ -116,16 +116,24 @@ class QwenToolSmokeTests(unittest.TestCase):
         def temp_factory(**_):
             return real_temp(prefix="qwen-test-", dir="/tmp")
 
+        seen = []
         def cli(root, profile, command, env, timeout=10):
             if "--version" in command:
                 return Completed(stdout="qwen 0.26.9")
             if "--help" in command:
                 return Completed(stdout="--core-tools --max-wall-time")
+            if "unittest" in command:
+                seen.append("sandboxed-unittest")
+                return Completed()
             if mode == "edit":
                 (root / "module.py").write_text(q.FIXED)
+            elif mode == "symlink":
+                (root / "module.py").unlink()
+                (root / "module.py").symlink_to(root / "test_module.py")
             return Completed(stdout=receipt())
 
-        for mode in ("edit", "no-edit"):
+        for mode in ("edit", "no-edit", "symlink"):
+            seen.clear()
             with self.subTest(mode=mode), patch.object(q.sys, "platform", "darwin"), \
                  patch.object(q.Path, "is_file", return_value=True), \
                  patch.object(q.shutil, "which", return_value="/usr/bin/qwen"), \
@@ -133,8 +141,9 @@ class QwenToolSmokeTests(unittest.TestCase):
                  patch.object(q, "verify_isolation", return_value=True), \
                  patch.object(q, "sandboxed", side_effect=cli):
                 result = q.run_real("http://127.0.0.1:11434/v1", "qwen3:4b")
-            self.assertEqual(result["state"], "TOOL_SMOKE_VERIFIED" if mode == "edit" else "FAILED")
-            self.assertEqual(result["accepted"], mode == "edit")
+            self.assertEqual(result["state"], {"edit": "TOOL_SMOKE_VERIFIED", "no-edit": "FAILED", "symlink": "UNKNOWN"}[mode])
+            self.assertEqual(result.get("accepted", False), mode == "edit")
+            self.assertEqual("sandboxed-unittest" in seen, mode != "symlink")
 
     def test_isolation_witness_requires_successful_kernel_probe(self):
         class Completed:
