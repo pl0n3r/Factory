@@ -170,6 +170,17 @@ class CoordinationError(RuntimeError):
     """Representa un rechazo seguro de una operación de coordinación."""
 
 
+INVENTORY_SCAN_ATTEMPTS = 3
+
+
+class _InventoryShift(Exception):
+    """Una fila reapareció en otra página: el inventario se movió durante la lectura."""
+
+    def __init__(self, page: int) -> None:
+        super().__init__(page)
+        self.page = page
+
+
 @dataclass
 class GitHubError(RuntimeError):
     """Representa fallos tipados sin publicar datos de la petición."""
@@ -704,12 +715,27 @@ class GitHub:
         GitHub mezcla Issues y PRs en /issues; validar las filas ANTES de
         filtrar y recorrer todas las páginas para no perder leases V3.
         """
+        # Orden estable (lo nuevo entra al final). Si aun así una fila se corre
+        # entre páginas, se relee todo desde la página 1; nunca se acepta un
+        # inventario con duplicados.
+        for attempt in range(1, INVENTORY_SCAN_ATTEMPTS + 1):
+            try:
+                return self._open_issues_scan()
+            except _InventoryShift as shift:
+                if attempt == INVENTORY_SCAN_ATTEMPTS:
+                    raise CoordinationError(
+                        f"Inventario de Issues incompleto: ID duplicado o inválido en página {shift.page}."
+                    ) from None
+        raise AssertionError("inalcanzable")
+
+    def _open_issues_scan(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         seen_numbers: set[int] = set()
         for page in range(1, 32):
             payload = self.request(
                 "GET",
-                f"/repos/{self.repo}/issues?state=open&per_page=100&page={page}",
+                f"/repos/{self.repo}/issues?state=open&sort=created&direction=asc"
+                f"&per_page=100&page={page}",
             )
             if not isinstance(payload, list) or len(payload) > 100:
                 raise CoordinationError(
@@ -721,10 +747,12 @@ class GitHub:
                         f"Inventario de Issues incompleto: fila en página {page} inválida."
                     )
                 number = row.get("number")
-                if type(number) is not int or number < 1 or number in seen_numbers:
+                if type(number) is not int or number < 1:
                     raise CoordinationError(
                         f"Inventario de Issues incompleto: ID duplicado o inválido en página {page}."
                     )
+                if number in seen_numbers:
+                    raise _InventoryShift(page)
                 seen_numbers.add(number)
                 if row.get("state") != "open":
                     raise CoordinationError(
