@@ -609,8 +609,7 @@ class GitHub:
                 or record["reservation"].get("version") != 3
                 or record["reservation"].get("active") is not True
                 or record.get("integrator_sha") is None
-                or not isinstance(record.get("sources"), list)
-                or len(record["sources"]) != 3):
+                or not _compose_source_rows_valid(record.get("sources"))):
             raise CoordinationError("Composición V3: registro inválido.")
         return record
 
@@ -3072,11 +3071,71 @@ def verified_parallel_file_evidence(
 
 
 
+def _compose_source_rows_valid(sources: Any) -> bool:
+    if not isinstance(sources, list) or len(sources) not in (2, 3):
+        return False
+    if not all(isinstance(row, dict) and type(row.get("issue")) is int
+               and row["issue"] > 0 and type(row.get("pr")) is int
+               and row["pr"] > 0 for row in sources):
+        return False
+    return (len({row["issue"] for row in sources}) == len(sources)
+            and len({row["pr"] for row in sources}) == len(sources))
+
+
+def _compose_ci_gate(api: GitHub) -> str:
+    # Only the explicitly supported consumer gets its own canonical gate.
+    return ("validate" if PROFILE.name == "en"
+            and api.repo.lower() == "pl0n3r/brvtal" else "Validar")
+
+
+def _compose_add_files(
+    api: GitHub, proof: dict[str, Any], head: str, main: str,
+    claims: list[str], seen: dict[str, tuple[str, str | None, bool]],
+    *, read_all: bool = False,
+) -> list[str]:
+    """Accept duplicate version-only files only if their immutable blobs agree."""
+    changed = proof.get("files") if isinstance(proof, dict) else None
+    if (
+        not isinstance(proof, dict) or proof.get("complete") is not True
+        or proof.get("head_sha") != head or proof.get("base_sha") != main
+        or not isinstance(changed, list) or not changed
+        or any(not isinstance(path, str) or not path for path in changed)
+        or len({_collision_key(path) for path in changed}) != len(changed)
+    ):
+        raise CoordinationError("Composición V3: diff incompleto.")
+    shared = shared_version_exempt_files(proof)
+    if not any(path not in shared for path in changed):
+        raise CoordinationError("Composición V3: fuente sin cambio funcional.")
+    for path in changed:
+        version_only = path in shared
+        if not version_only and not any(claims_overlap(path, claim) for claim in claims):
+            raise CoordinationError("Composición V3: diff fuera de claims.")
+        key = _collision_key(path)
+        blob = api.blob_sha_at(path, head) if read_all or version_only else None
+        prior = seen.get(key)
+        if prior is not None and not (
+            version_only and prior[2] and prior[0] == path and prior[1] == blob
+        ):
+            raise CoordinationError("Composición V3: archivo duplicado o versión distinta.")
+        seen[key] = (path, blob, version_only)
+    return changed
+
+
+def _compose_shared_claims_disjoint(sources: list[dict[str, Any]]) -> None:
+    for row in sources:
+        for path in row["files"]:
+            if any(claims_overlap(path, claim) for claim in row["claims"]):
+                continue
+            if any(claims_overlap(path, claim) for other in sources
+                   if other is not row for claim in other["claims"]):
+                raise CoordinationError("Composición V3: versión compartida reclama tercero.")
+
+
 def plan_atomic_compose_v3(
     api: GitHub, issue_numbers: list[int], owner: str,
     *, integrator_issue: int | None = None,
 ) -> dict[str, Any]:
-    """Preflight GET-only de tres V3. NUNCA transfiere claims ni concede merge.
+    """Preflight GET-only de dos o tres V3. NUNCA transfiere claims ni concede merge.
 
     El plan es evidencia efímera de un snapshot, no un permiso de escritura.
     Cualquier deriva obliga a recomputar bajo lock/CAS antes de una composición
@@ -3084,13 +3143,13 @@ def plan_atomic_compose_v3(
     """
     if (
         not isinstance(issue_numbers, list)
-        or len(issue_numbers) != 3
+        or len(issue_numbers) not in (2, 3)
         or any(type(number) is not int or number <= 0 for number in issue_numbers)
-        or len(set(issue_numbers)) != 3
+        or len(set(issue_numbers)) != len(issue_numbers)
         or not isinstance(owner, str)
         or not owner
     ):
-        raise CoordinationError("Composición V3: se requieren tres Issues únicos y owner.")
+        raise CoordinationError("Composición V3: se requieren dos o tres Issues únicos y owner.")
 
     require_global_running(api)
     main_sha = api.branch_sha("main")
@@ -3103,7 +3162,7 @@ def plan_atomic_compose_v3(
         raise CoordinationError("Composición V3: PRs incompletos.")
     result: list[dict[str, Any]] = []
     paths_seen: list[str] = []
-    files_seen: set[str] = set()
+    files_seen: dict[str, tuple[str, str | None, bool]] = {}
     for number in issue_numbers:
         issue = api.issue(number)
         if (
@@ -3168,22 +3227,7 @@ def plan_atomic_compose_v3(
         ):
             raise CoordinationError(f"Composición V3: PR #{number} no exact-main.")
         evidence = api.pull_files_exact_head(pr_number)
-        changed = evidence.get("files") if isinstance(evidence, dict) else None
-        if (
-            not isinstance(evidence, dict) or evidence.get("complete") is not True
-            or evidence.get("head_sha") != branch_sha
-            or evidence.get("base_sha") != main_sha
-            or not isinstance(changed, list) or not changed
-            or any(not isinstance(path, str) or not path for path in changed)
-        ):
-            raise CoordinationError(f"Composición V3: diff #{number} incompleto.")
-        for path in changed:
-            if not any(claims_overlap(path, claim) for claim in claims):
-                raise CoordinationError(f"Composición V3: diff #{number} fuera de claims.")
-            key = _collision_key(path)
-            if key in files_seen:
-                raise CoordinationError("Composición V3: archivo duplicado.")
-            files_seen.add(key)
+        changed = _compose_add_files(api, evidence, branch_sha, main_sha, claims, files_seen)
         result.append({
             "issue": number,
             "pr": pr_number,
@@ -3197,7 +3241,12 @@ def plan_atomic_compose_v3(
             "files": sorted(changed),
         })
 
-    # Una cuarta lease con claim superpuesto anula el plan aun si su label
+    _compose_shared_claims_disjoint(result)
+    if len(files_seen) > MAX_PATHS:
+        raise CoordinationError("Composición V3: demasiados archivos para el integrador.")
+    all_files = sorted(row[0] for row in files_seen.values())
+    shared_paths = [row[0] for row in files_seen.values() if row[2]]
+    # Una lease externa con claim superpuesto anula el plan aun si su label
     # visible fue cambiado a available/blocked. Nunca mover sus derechos.
     all_issues = api.open_issues()
     if not isinstance(all_issues, list) or len(all_issues) > MAX_OPEN_ISSUES_V3:
@@ -3225,7 +3274,7 @@ def plan_atomic_compose_v3(
                 or receipt.get("sources") != result
                 or receipt.get("source_ids") != issue_numbers
                 or receipt.get("reservation") != lease
-                or sorted(lease.get("task_paths", [])) != sorted(files_seen)
+                or sorted(lease.get("task_paths", [])) != all_files
                 or lease.get("owner") != owner
             ):
                 raise CoordinationError(
@@ -3235,7 +3284,7 @@ def plan_atomic_compose_v3(
         other_claims = lease.get("task_paths")
         if lease.get("version") != 3 or not isinstance(other_claims, list):
             raise CoordinationError("Composición V3: lease externa sin claims V3.")
-        if any(claims_overlap(a, b) for a in paths_seen for b in other_claims):
+        if any(claims_overlap(a, b) for a in paths_seen + shared_paths for b in other_claims):
             raise CoordinationError("Composición V3: colisión con tercero.")
 
     # La doble lectura es solo coherencia de preview; nunca equivale al CAS
@@ -3300,7 +3349,7 @@ def verify_exact_integrator_ci_v3(
     api: GitHub, plan: dict[str, Any], candidate_pr: int,
     *, tree_only: bool = False,
 ) -> dict[str, Any]:
-    """Acredita CI del candidato con seis blobs idénticos, sin conceder merge.
+    """Acredita CI del candidato con la unión exacta de blobs, sin conceder merge.
 
     El preview de CI NO transfiere las V3. La autoridad CAS y el cierre
     posmerge son puertas separadas: la salida nunca autoriza escritura.
@@ -3317,11 +3366,11 @@ def verify_exact_integrator_ci_v3(
         raise CoordinationError("CI compuesto: plan no autorizado o incompleto.")
     sources = plan.get("sources")
     if (
-        not isinstance(sources, list) or len(sources) != 3
+        not _compose_source_rows_valid(sources)
         or api.branch_sha("main") != plan["main_sha"]
     ):
         raise CoordinationError("CI compuesto: fuentes o main inconsistentes.")
-    expected: dict[str, str] = {}
+    seen: dict[str, tuple[str, str | None, bool]] = {}
     source_prs: set[int] = set()
     for row in sources:
         if (
@@ -3364,19 +3413,22 @@ def verify_exact_integrator_ci_v3(
                != row["reservation_id"]
         ):
             raise CoordinationError("CI compuesto: PR fuente perdió identidad V3.")
-        for path in row["files"]:
-            if (
-                not isinstance(path, str) or path in expected
-                or not any(claims_overlap(path, claim)
-                           for claim in row["claims"])
-            ):
-                raise CoordinationError("CI compuesto: archivos duplicados o inválidos.")
-            expected[path] = api.blob_sha_at(path, row["branch_sha"])
+        proof = api.pull_files_exact_head(row["pr"])
+        changed = _compose_add_files(
+            api, proof, row["branch_sha"], plan["main_sha"],
+            row["claims"], seen, read_all=True,
+        )
+        if sorted(changed) != sorted(row["files"]):
+            raise CoordinationError("CI compuesto: diff de fuente distinto del plan.")
+    _compose_shared_claims_disjoint(sources)
+    expected = {row[0]: row[1] for row in seen.values()}
+    shared = {row[0] for row in seen.values() if row[2]}
     if (
-        len(expected) != 6 or type(plan.get("file_count")) is not int
+        not expected or len(expected) > MAX_PATHS
+        or type(plan.get("file_count")) is not int
         or plan["file_count"] != len(expected) or candidate_pr in source_prs
     ):
-        raise CoordinationError("CI compuesto: seis archivos únicos obligatorios.")
+        raise CoordinationError("CI compuesto: conjunto de archivos inválido.")
     candidate = api.pull(candidate_pr)
     head, base = candidate.get("head"), candidate.get("base")
     if (
@@ -3384,7 +3436,9 @@ def verify_exact_integrator_ci_v3(
         or (not tree_only and candidate.get("draft") is not False)
         or not isinstance(head, dict) or not isinstance(base, dict)
         or not isinstance(head.get("ref"), str)
-        or re.fullmatch(r"trabajo/issue-[1-9][0-9]*", head["ref"]) is None
+        or issue_from_branch(head["ref"]) is None
+        or issue_from_branch(head["ref"]) <= 0
+        or head["ref"] != branch_for_issue(issue_from_branch(head["ref"]))
         or not local_pull_source_matches(api, candidate, head["ref"])
         or not isinstance(head.get("sha"), str)
         or SHA_RE.fullmatch(head["sha"]) is None
@@ -3401,11 +3455,13 @@ def verify_exact_integrator_ci_v3(
         or not isinstance(proof.get("files"), list)
         or set(proof["files"]) != set(expected)
         or len(proof["files"]) != len(expected)
+        or not shared.issubset(shared_version_exempt_files(proof))
     ):
-        raise CoordinationError("CI compuesto: árbol de seis archivos incompleto.")
+        raise CoordinationError("CI compuesto: árbol de archivos incompleto.")
     for path, source_blob in expected.items():
         if api.blob_sha_at(path, head["sha"]) != source_blob:
             raise CoordinationError("CI compuesto: contenido distinto del origen.")
+    gate = _compose_ci_gate(api)
     if not tree_only:
         checks = api.exact_check_runs(head["sha"])
         if not isinstance(checks, list):
@@ -3413,13 +3469,13 @@ def verify_exact_integrator_ci_v3(
         # El contrato canónico de Factory es Validar. No se acepta una
         # etiqueta arbitraria, un check de un hijo ni un status GitHub ajeno.
         gates = [check for check in checks if isinstance(check, dict)
-                 and check.get("name") == "Validar"]
+                 and check.get("name") == gate]
         if (
             len(gates) != 1 or gates[0].get("head_sha") != head["sha"]
             or gates[0].get("status") != "completed"
             or gates[0].get("conclusion") != "success"
         ):
-            raise CoordinationError("CI compuesto: Validar exact-HEAD no verde.")
+            raise CoordinationError(f"CI compuesto: {gate} exact-HEAD no verde.")
     last = api.pull(candidate_pr)
     if (
         api.branch_sha("main") != plan["main_sha"]
@@ -3465,7 +3521,7 @@ def verify_exact_integrator_ci_v3(
         "integrator_sha": head["sha"],
         "main_sha": plan["main_sha"],
         "files_verified": len(expected),
-        "gate": "tree_only" if tree_only else "Validar",
+        "gate": "tree_only" if tree_only else gate,
     }
 
 
@@ -3706,11 +3762,12 @@ def reconcile_atomic_compose_v3(
     ):
         raise CoordinationError("Composición V3: merge integrador no verificado.")
     checks = api.exact_check_runs(merged_sha)
+    gate = _compose_ci_gate(api)
     matches = [c for c in checks if isinstance(c, dict)
-               and c.get("name") == "Validar" and c.get("head_sha") == merged_sha]
+               and c.get("name") == gate and c.get("head_sha") == merged_sha]
     if (len(matches) != 1 or matches[0].get("status") != "completed"
             or matches[0].get("conclusion") != "success"):
-        raise CoordinationError("Composición V3: Validar exact-main no verde.")
+        raise CoordinationError(f"Composición V3: {gate} exact-main no verde.")
     # Fencing: revalidar V3 de todas las fuentes antes de un cierre.
     for row in receipt["sources"]:
         lease = active_reservation(api, row["issue"])
@@ -5684,8 +5741,7 @@ def collision_validation_errors(
                 or receipt.get("integrator_pr") != pr_number
                 or receipt.get("integrator_sha") != selected_head.get("sha")
                 or receipt.get("reservation") != holder
-                or not isinstance(receipt.get("sources"), list)
-                or len(receipt["sources"]) != 3
+                or not _compose_source_rows_valid(receipt.get("sources"))
                 or not isinstance(first, dict)
                 or receipt.get("main_sha") != first.get("base_sha")
                 or sorted(holder.get("task_paths", [])) != sorted(current_files)

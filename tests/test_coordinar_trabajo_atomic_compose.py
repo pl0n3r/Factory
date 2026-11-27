@@ -29,10 +29,10 @@ def paths(number: int) -> list[str]:
 class ReadOnlyFake:
     """Fake sin operaciones de escritura: un intento de POST rompe la prueba."""
 
-    def __init__(self) -> None:
-        self.repo = "pl0n3r/Factory"
+    def __init__(self, numbers=ISSUES, repo="pl0n3r/Factory") -> None:
+        self.repo = repo
         self.main = MAIN
-        self.branches = {f"trabajo/issue-{n}": f"{n:040x}" for n in ISSUES}
+        self.branches = {coord.branch_for_issue(n): f"{n:040x}" for n in numbers}
         self.issues = {
             n: {
                 "number": n,
@@ -40,7 +40,7 @@ class ReadOnlyFake:
                 "body": str(n),
                 "labels": [{"name": coord.STATUS_RESERVED}],
             }
-            for n in ISSUES
+            for n in numbers
         }
         self.comments = {}
         self.pulls = {}
@@ -48,8 +48,8 @@ class ReadOnlyFake:
         self.pr_by_issue = {}
         self.extra_issues = []
         self.pr_override = None
-        for n in ISSUES:
-            branch = f"trabajo/issue-{n}"
+        for n in numbers:
+            branch = coord.branch_for_issue(n)
             uuid = "00000000-0000-4000-8000-" + f"{n:012x}"
             reservation = coord.reservation_marker(
                 OWNER, uuid, branch, True, "tomar",
@@ -67,11 +67,11 @@ class ReadOnlyFake:
                 "head": {
                     "sha": self.branches[branch],
                     "ref": branch,
-                    "repo": {"full_name": self.repo, "name": "Factory",
-                             "owner": {"login": "pl0n3r"}},
+                    "repo": {"full_name": self.repo, "name": self.repo.split("/", 1)[1],
+                             "owner": {"login": self.repo.split("/", 1)[0]}},
                 },
                 "base": {"sha": MAIN, "ref": "main"},
-                "body": f"<!-- condor-reserva-id: {uuid} -->",
+                "body": f"<!-- {coord.PROFILE.hidden_marker}: {uuid} -->",
             }
             self.pulls[pr["number"]] = pr
             self.pr_by_issue[n] = pr["number"]
@@ -85,13 +85,13 @@ class ReadOnlyFake:
         # Candidato de integración simulado, distinto de los tres PRs fuente.
         # El mock almacena identidad de contenido por blob, no solo nombres.
         self.candidate_sha = "b" * 40
-        self.candidate_ref = "trabajo/issue-3000"
+        self.candidate_ref = coord.branch_for_issue(3000)
         self.branches[self.candidate_ref] = self.candidate_sha
-        files = [path for n in ISSUES for path in paths(n)]
+        files = [path for n in numbers for path in paths(n)]
         self.blobs = {}
-        for n in ISSUES:
+        for n in numbers:
             for path in paths(n):
-                self.blobs[(path, self.branches[f"trabajo/issue-{n}"])] = hashlib.sha1(
+                self.blobs[(path, self.branches[coord.branch_for_issue(n)])] = hashlib.sha1(
                     path.encode("utf-8")
                 ).hexdigest()
         for path in files:
@@ -105,8 +105,8 @@ class ReadOnlyFake:
             "head": {
                 "ref": self.candidate_ref,
                 "sha": self.candidate_sha,
-                "repo": {"full_name": self.repo, "name": "Factory",
-                         "owner": {"login": "pl0n3r"}},
+                "repo": {"full_name": self.repo, "name": self.repo.split("/", 1)[1],
+                         "owner": {"login": self.repo.split("/", 1)[0]}},
             },
             "base": {"ref": "main", "sha": MAIN},
         }
@@ -162,7 +162,7 @@ class AtomicComposeTests(unittest.TestCase):
     def setUp(self):
         self.api = ReadOnlyFake()
 
-    def plan(self):
+    def plan(self, numbers=ISSUES):
         # Los contratos externos se prueban exhaustivamente en sus suites
         # canónicas. Aquí se prueban claims, pinning y lectura del plan.
         with (
@@ -177,7 +177,87 @@ class AtomicComposeTests(unittest.TestCase):
             patch.object(coord, "task_marker_fingerprint", return_value=TASK),
             patch.object(coord, "contract_fingerprint", return_value=ACCEPTANCE),
         ):
-            return coord.plan_atomic_compose_v3(self.api, ISSUES, OWNER)
+            return coord.plan_atomic_compose_v3(self.api, numbers, OWNER)
+
+    def two_source_fixture(self):
+        self.addCleanup(coord.configure_profile, coord.PROFILE.name)
+        coord.configure_profile("en")
+        numbers = ISSUES[:2]
+        self.api = ReadOnlyFake(numbers, "pl0n3r/brvtal")
+        # Both source versions must have identical blobs and trusted version-only
+        # evidence, as happens when both are rebased to the same main.
+        self.enterContext(patch.object(
+            coord, "shared_version_paths", return_value=frozenset({"package.json"})
+        ))
+        for n in numbers:
+            pr = self.api.pr_by_issue[n]
+            self.api.changed[pr]["files"].append("package.json")
+            self.api.changed[pr]["version_only_shared"] = ["package.json"]
+            self.api.blobs[("package.json", self.api.branches[coord.branch_for_issue(n)])] = "e" * 40
+        self.api.changed[4000]["files"].append("package.json")
+        self.api.changed[4000]["version_only_shared"] = ["package.json"]
+        self.api.blobs[("package.json", self.api.candidate_sha)] = "e" * 40
+        self.api.checks[0]["name"] = "validate"
+        return numbers
+
+    def test_two_disjoint_leases_plan_no_mutation(self):
+        numbers = self.two_source_fixture()
+        plan = self.plan(numbers)
+        self.assertEqual(plan["file_count"], 5)
+        self.assertEqual([row["issue"] for row in plan["sources"]], numbers)
+        self.assertFalse(plan["write_authorized"])
+        self.assertFalse(any(event[0] in ("POST", "PATCH", "DELETE") for event in self.api.log))
+        for invalid in ([2001], [2001, 2001], [2001, 2002, 2003, 2004]):
+            with self.assertRaises(coord.CoordinationError):
+                self.plan(invalid)
+        second = self.api.pr_by_issue[2002]
+        self.api.changed[second]["version_only_shared"] = []
+        with self.assertRaises(coord.CoordinationError):
+            self.plan(numbers)
+        self.api.changed[second]["version_only_shared"] = ["package.json"]
+        self.api.blobs[("package.json", self.api.branches[coord.branch_for_issue(2002)])] = "f" * 40
+        with self.assertRaisesRegex(coord.CoordinationError, "versión distinta"):
+            self.plan(numbers)
+
+    def test_two_sources_authorized_cas_and_reconcile(self):
+        numbers = self.two_source_fixture()
+        plan = self.prepare_composition(numbers)
+        with patch.object(coord, "require_global_running"):
+            proof = coord.verify_exact_integrator_ci_v3(self.api, plan, 4000)
+        self.assertEqual(proof["gate"], "validate")
+        self.assertEqual(proof["files_verified"], 5)
+        before = copy.deepcopy(self.api.pulls)
+        approval = self.api.comments[3000].pop()
+        with self.assertRaisesRegex(coord.CoordinationError, "aprobación owner"):
+            self.atomic_compose(numbers)
+        self.assertIsNone(self.api.grant)
+        self.api.comments[3000].append(approval)
+        self.api.lock_held = True
+        with self.assertRaisesRegex(coord.CoordinationError, "repo-wide ocupado"):
+            self.atomic_compose(numbers)
+        self.api.lock_held = False
+        grant = self.atomic_compose(numbers)
+        self.assertEqual(grant["source_ids"], numbers)
+        self.assertEqual(self.atomic_compose(numbers), grant)
+        self.assertEqual(self.api.log.count(("CAS", 3000, MAIN)), 1)
+        for n in numbers:
+            pr = self.api.pr_by_issue[n]
+            self.assertEqual(self.api.pulls[pr], before[pr])
+            self.assertTrue(coord.active_reservation(self.api, n)["active"])
+        self.assertEqual(coord.collision_validation_errors(self.api, 4000), [])
+        with patch.object(coord, "require_global_running"):
+            with self.assertRaisesRegex(coord.CoordinationError, "merge integrador"):
+                coord.reconcile_atomic_compose_v3(self.api, 3000, OWNER, "OWNER")
+            self.api.pulls[4000].update(merged=True, state="closed", merge_commit_sha="d" * 40)
+            self.api.main = "d" * 40
+            self.api.checks[0].update(head_sha="d" * 40, name="Validar")
+            with self.assertRaisesRegex(coord.CoordinationError, "validate exact-main"):
+                coord.reconcile_atomic_compose_v3(self.api, 3000, OWNER, "OWNER")
+            self.assertEqual(self.api.close_count, 0)
+            self.api.checks[0]["name"] = "validate"
+            result = coord.reconcile_atomic_compose_v3(self.api, 3000, OWNER, "OWNER")
+        self.assertEqual(result["source_prs"], [self.api.pr_by_issue[n] for n in numbers])
+        self.assertEqual(self.api.close_count, 2)
 
     def test_three_disjoint_leases_plan_no_mutation(self):
         result = self.plan()
@@ -399,7 +479,7 @@ class AtomicComposeTests(unittest.TestCase):
     def test_candidate_rejects_missing_files_modified_blobs_and_draft(self):
         with self.subTest("filename missing"):
             self.api.changed[4000]["files"] = self.api.changed[4000]["files"][:-1]
-            with self.assertRaisesRegex(coord.CoordinationError, "seis archivos"):
+            with self.assertRaisesRegex(coord.CoordinationError, "árbol de archivos"):
                 self.candidate_ci()
             self.api.changed[4000]["files"] = [
                 p for number in ISSUES for p in paths(number)
@@ -529,7 +609,7 @@ class AtomicComposeTests(unittest.TestCase):
                              for event in self.api.log))
 
 
-    def prepare_composition(self):
+    def prepare_composition(self, numbers=ISSUES):
         """API sintética: las escrituras son eventos atómicos observables."""
         api = self.api
         api.issues[3000] = {
@@ -607,14 +687,15 @@ class AtomicComposeTests(unittest.TestCase):
 
         api.update_pull_body = update_pull_body
 
-        plan = self.plan()
+        plan = self.plan(numbers)
+        api.integrator_claims = sorted({p for row in plan["sources"] for p in row["files"]})
         intention = {
             "version": 1, "integrator_issue": 3000,
             "candidate_pr": 4000, "candidate_sha": api.candidate_sha,
             "main_sha": MAIN, "owner": OWNER,
             "sources": [[r["issue"], r["pr"], r["branch_sha"],
                          r["reservation_id"]] for r in plan["sources"]],
-            "claims": sorted(p for n in ISSUES for p in paths(n)),
+            "claims": api.integrator_claims,
         }
         digest = hashlib.sha256(json.dumps(
             intention, separators=(",", ":"), sort_keys=True
@@ -628,13 +709,13 @@ class AtomicComposeTests(unittest.TestCase):
         })
         return plan
 
-    def atomic_compose(self):
+    def atomic_compose(self, numbers=ISSUES):
         with (
             patch.object(coord, "require_global_running"),
             patch.object(
                 coord, "parse_task_marker",
                 side_effect=lambda body: {
-                    "paths": sorted(p for n in ISSUES for p in paths(n))
+                    "paths": self.api.integrator_claims
                     if body == "3000" else paths(int(body)),
                     "depends_on": [],
                 },
@@ -643,7 +724,7 @@ class AtomicComposeTests(unittest.TestCase):
             patch.object(coord, "contract_fingerprint", return_value=ACCEPTANCE),
         ):
             return coord.authorize_atomic_compose_v3(
-                self.api, ISSUES, 3000, 4000, OWNER, "OWNER"
+                self.api, numbers, 3000, 4000, OWNER, "OWNER"
             )
 
     def test_authorized_cas_compose_preserves_source_refs(self):
