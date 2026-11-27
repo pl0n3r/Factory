@@ -1,0 +1,38 @@
+# Factory #1082 — mapeo canónico de principios y salud de cola
+
+Hoja [#2269](https://github.com/pl0n3r/Factory/issues/2269), corte 27-nov-2026: [Factory/main `7197ff10281762fb9f7e897bf15f768f45823438`](https://github.com/pl0n3r/Factory/commit/7197ff10281762fb9f7e897bf15f768f45823438), [CI push](https://github.com/pl0n3r/Factory/actions/runs/45897177087), Tests de scripts [140173854455](https://github.com/pl0n3r/Factory/actions/jobs/140173854455) y Validar [140174669739](https://github.com/pl0n3r/Factory/actions/jobs/140174669739) success. #767 RUNNING, #921 cerrado; v1 observado en el mismo commit. Se aplica [factory-epic-splitter](../../claude/factory-claude/skills/factory-epic-splitter/SKILL.md), con evidencia exacta, claims disjuntos, no duplicación ni autoridad implícita. **No se cierra la épica #1082 ni se certifica un efecto de producción.**
+
+## Matriz de aceptación del padre
+
+| AC | Evidencia contrastada | Resultado y salida pendiente |
+| --- | --- | --- |
+| 01 | [Principios](../principios-construccion.md), blob 6546b38e308d3195e489fa0889c2537c1ffb68f0, y [lección](../../lecciones/registros/principios-construccion.jsonl); pruebas test_principios_construccion.py. #1091 completado. | Mantener acreditación documental existente. No duplicar. |
+| 02 | [Template](../../template/AGENTES.md) blob d76d4834a11edda12cf53632563a2d9d32d179b7; #1103 y #1109 completados. #1110 cerrado como duplicate, no afirmar que su script exista. [Plan offline](../../scripts/plan_sync_agentes_consumidores.py) emite can_apply=false. | Pendiente: 0/6 consumidores con bloque canónico observado. Requiere seis hojas locales con V3 propia y verificación exact-main después de merge. |
+| 03 | #2220 y #2221 completados: [cron](../../.github/workflows/salud-cola.yml) ejecuta observación local y censo global GET-only; #1539/PR #1540 implementó publicación manual opt-in bajo #1532/A. | Pendiente: [run 45991940588](https://github.com/pl0n3r/Factory/actions/runs/45991940588/job/140481661565) falla con UNKNOWN/incomplete_or_unstable_inventory, counts=null, fingerprints=null, writes=0; publicador skipped. No hay recibo de aviso ni condición global verificada. #2270 es corte de diagnóstico. |
+| 04 | [Normalizador](../../scripts/normalizar_issue.py) blob 3536cf400dda55cb6ea2bd10d46097a0fd0b1af2: inspect_claim_paths previo a generar marker; pruebas existentes. #1107 completado. | Mantener acreditación previa de normalización; no inferir propagación en consumidores. |
+
+## AC-02: inventario exacto de consumidores
+
+El bloque `Principios de construcción de la fábrica`, Regla 0 y marcador `factory-principios-sync:start` están ausentes en cada archivo consumidor leído desde su commit exacto. No se deduce estado de otros archivos ni de un checkout productivo.
+
+| Consumidor | Main observado | Ruta y blob |
+| --- | --- | --- |
+| Condor | 5805359979562491fc78894d6b901e263fc911a7 | [AGENTES.md](https://github.com/pl0n3r/Condor/blob/5805359979562491fc78894d6b901e263fc911a7/AGENTES.md), 56abf5e4594b739f8b396e7d31748ada35128766 |
+| GrindFlow | af691a8a41324d68fa9d8752c4bdf02cad6d186e | [AGENTS.md](https://github.com/pl0n3r/GrindFlow/blob/af691a8a41324d68fa9d8752c4bdf02cad6d186e/AGENTS.md), 6fb00bb8a891e16076e3be25b5dedb5538425eb6 |
+| brvtal | 3f76c15678e0d6c31271406eff5ff1ba66d6c9b2 | [AGENTS.md](https://github.com/pl0n3r/brvtal/blob/3f76c15678e0d6c31271406eff5ff1ba66d6c9b2/AGENTS.md), d8c5ee3a7865aee0d542a1321deee804cef232ac |
+| ControlBot | b7ffd01d6a4e4100e54c0b2852596dcb12a55925 | [AGENTES.md](https://github.com/pl0n3r/ControlBot/blob/b7ffd01d6a4e4100e54c0b2852596dcb12a55925/AGENTES.md), 3bed02725c87431c4f3e33980435c4c3a038c99e |
+| AutoFactory | 73a5c3ed919ef35cf57ab14869920deb1acb1c9b | [AGENTES.md](https://github.com/pl0n3r/AutoFactory/blob/73a5c3ed919ef35cf57ab14869920deb1acb1c9b/AGENTES.md), f0afdc16e0f783e21464fa4a95455e11433c395c |
+| FactoryRunner | 3c4e525cba5c8a854228b201ccfc799e96f7c784 | [AGENTES.md](https://github.com/pl0n3r/FactoryRunner/blob/3c4e525cba5c8a854228b201ccfc799e96f7c784/AGENTES.md), d42421f6a3037592f9dc9e99dc76c3a5b42c1a5e |
+
+**Splitter:** seis cortes independientes, uno por fila y con claim exclusivo de la ruta de la fila en su repo. En cada uno: revalidar template exacto y autoridad, insertar un solo bloque manteniendo reglas locales, verificar idempotencia y ausencia de duplicados, enlazar test/check real del consumidor y validar PR exact-HEAD. Reutilizar #1109 (plan puro con fixtures). Antes de materializar cada hoja, buscar duplicados y claims activos, validar su contrato local y su dependencia de sincronización; no transferir números de issues entre repos ni usar un marker ficticio. La sesión dirigida a Factory no reserva ni crea issues en otros repos. El criterio macro exige seis recibos terminales y volver a comparar los blobs posteriores; la sola presencia de un encabezado no demuestra igualdad del bloque. Si una fuente falta o es ambigua, UNKNOWN. No es una tarea humana aprobar una sincronización documental ordinaria; sí se conservan las puertas de publicación del kit y cualquier autoridad adicional que el mecanismo requiera.
+
+## AC-03: descomposición de cola y publicación
+
+- #1098, #1100, #1104, #1102, #1527, #1539, #2220, #2221 y #2249 están cerrados/completed. #1112 está cerrado/not_planned; no acreditar esa hoja por su cierre. #2249 produce únicamente propuesta offline, no autoridad de ejecución. No duplicar esos módulos.
+- [#2270](https://github.com/pl0n3r/Factory/issues/2270): hoja técnica nueva, planificada, depende de #2221 (cerrado). Claim `scripts/salud_cola_global_observar.py` y `tests/test_salud_cola_global_observar.py`; disjuntos del mapeo y de #2267. Tests de scripts para distinguir categorías cerradas de fallo de página/estabilidad/ensamblado, conservar UNKNOWN, cuota, identidad y cero escrituras sin reflejar datos sensibles. El contrato se debe validar antes de reservar; no afirmar ejecución. Justificación: fallo operativo real del workflow y diagnóstico agregado no discriminante, no mera hipótesis de hardening.
+- Reentrada del censo: después de obtener un motivo sanitizado verificable, determinar si existe otra corrección técnica material y acotada; no crear una cadena de repairs por hipótesis. Un UNKNOWN no es cola vacía. El [workflow](../../.github/workflows/salud-cola.yml) mantiene el job de publicación separado, exclusivamente workflow_dispatch con publicar=true; observación programada no equivale a publicación.
+- Puerta de autoridad y condición real: #1532/A autoriza únicamente el aviso acotado en Factory, no nuevos permisos, escrituras en consumidores ni aviso simulado. Solo si un inventario real completo, estable, con identidad y presupuesto satisface la condición objetiva, usar el procedimiento opt-in bajo autoridad vigente, verificar recibos de idempotencia y cuota. No invocar publicación para fabricar aceptación ni transformar UNKNOWN en READY/NO_WORK. Si se necesitan nuevas credenciales/autoridad, son del propietario y no una hoja automática. Ninguna ejecución mutante se realiza aquí.
+
+## QA y reversión de #2269
+
+AC-01: cuatro criterios cotejados con código, estados de hijos y runs reales; seis repos leídos por SHA; AC-02: descomposición de seis cortes locales y #2270, fronteras humanas explícitas. Gates Tests de scripts y Validar deben ejecutarse sobre el HEAD del PR de esta hoja; no se atribuyen resultados futuros. Ingeniería de software y QA: cambio documental único, sin runtime, permisos, datos reales ni release; reversión por revert de esta página, con reconciliación separada del registro del padre y #2270. Mantener #1082 abierto, AC-02/03 sin marcar.
