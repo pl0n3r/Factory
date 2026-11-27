@@ -67,8 +67,8 @@ class ReadOnlyFake:
                 "head": {
                     "sha": self.branches[branch],
                     "ref": branch,
-                    "repo": {"full_name": self.repo, "name": "Factory",
-                             "owner": {"login": "pl0n3r"}},
+                    "repo": {"full_name": self.repo, "name": self.repo.split("/", 1)[1],
+                             "owner": {"login": self.repo.split("/", 1)[0]}},
                 },
                 "base": {"sha": MAIN, "ref": "main"},
                 "body": f"<!-- {coord.PROFILE.hidden_marker}: {uuid} -->",
@@ -105,8 +105,8 @@ class ReadOnlyFake:
             "head": {
                 "ref": self.candidate_ref,
                 "sha": self.candidate_sha,
-                "repo": {"full_name": self.repo, "name": "Factory",
-                         "owner": {"login": "pl0n3r"}},
+                "repo": {"full_name": self.repo, "name": self.repo.split("/", 1)[1],
+                         "owner": {"login": self.repo.split("/", 1)[0]}},
             },
             "base": {"ref": "main", "sha": MAIN},
         }
